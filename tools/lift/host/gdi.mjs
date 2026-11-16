@@ -327,7 +327,7 @@ export function installGdi(SHIMS, { wstr }) {
   def('SetROP2', 2, () => 13);
   def('SetMapMode', 2, () => 1);
   def('SetViewportOrgEx', 4, () => 1);
-  def('GetDeviceCaps', 2, (h, i) => ({ 8: 1280, 10: 720, 12: 32, 14: 1, 24: 0xffffffff, 88: 96, 90: 96, 108: 32 }[i] ?? 0));
+  def('GetDeviceCaps', 2, (h, i) => ({ 8: 2560, 10: 1440, 12: 32, 14: 1, 24: 0xffffffff, 88: 96, 90: 96, 108: 32 }[i] ?? 0));
 
   // Text metrics and measurement
 

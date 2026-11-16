@@ -10,9 +10,11 @@ export const FAKES = [];
 export class GuestThreadExit extends Error { constructor(code) { super(`guest thread exit ${code}`); this.code = code >>> 0; } }
 
 const DISPLAY_MODES = [
-  [1920, 1080], [1600, 900], [1366, 768], [1280, 720], [1024, 768], [800, 600],
+  [2560, 1440], [1920, 1080], [1600, 900], [1366, 768], [1280, 720], [1024, 768], [800, 600],
 ].flatMap(([w, h]) => [60].map((hz) => ({ w, h, hz, bpp: 32 })));
-export const CURRENT_MODE = { w: 1280, h: 720, hz: 60, bpp: 32 };
+// The desktop is reported larger than any size the page asks for (main.js caps it at 1920x1080): Source refuses a windowed
+// mode bigger than the desktop and falls back to 800x600.
+export const CURRENT_MODE = { w: 2560, h: 1440, hz: 60, bpp: 32 };
 
 function fillDevMode(g, p, m) {
   // DEVMODEA: dmSize@0x24 (WORD), dmFields@0x28, dmBitsPerPel@0x68, dmPelsWidth@0x6c,

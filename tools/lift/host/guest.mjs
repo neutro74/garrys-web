@@ -886,7 +886,7 @@ SHIMS['user32.dll!GetCursorPos'] = { arity: 1, pop: 4, fn: function (p) {
   if (p) { this.g.u32(p, 640); this.g.u32(p + 4, 360); } return 1;
 } };
 SHIMS['user32.dll!SetCursorPos'] = { arity: 2, pop: 8, fn: () => 1 };
-const METRICS = { 0: 1280, 1: 720, 4: 1, 5: 3, 6: 1, 7: 1, 8: 1, 15: 0, 16: 0, 43: 1, 45: 2, 47: 3 };
+const METRICS = { 0: 2560, 1: 1440, 4: 1, 5: 3, 6: 1, 7: 1, 8: 1, 15: 0, 16: 0, 43: 1, 45: 2, 47: 3 };
 SHIMS['user32.dll!GetSystemMetrics'] = { arity: 1, pop: 4, fn: function (n) {
   return METRICS[n] ?? 0;
 } };
@@ -898,13 +898,13 @@ SHIMS['user32.dll!SetFocus'] = { arity: 1, pop: 4, fn: () => 0x7ff10300 };
 SHIMS['user32.dll!SetCapture'] = { arity: 1, pop: 4, fn: () => 0x7ff10300 };
 SHIMS['user32.dll!ReleaseCapture'] = { arity: 0, pop: 0, fn: () => 1 };
 SHIMS['user32.dll!GetClientRect'] = { arity: 2, pop: 8, fn: function (_h, r) {
-  if (r) { this.g.u32(r, 0); this.g.u32(r + 4, 0); this.g.u32(r + 8, 1280); this.g.u32(r + 12, 720); }
+  if (r) { this.g.u32(r, 0); this.g.u32(r + 4, 0); this.g.u32(r + 8, 2560); this.g.u32(r + 12, 1440); }
   return 1;
 } };
 SHIMS['user32.dll!ClientToScreen'] = { arity: 2, pop: 8, fn: () => 1 };
 SHIMS['user32.dll!ScreenToClient'] = { arity: 2, pop: 8, fn: () => 1 };
 SHIMS['user32.dll!GetWindowRect'] = { arity: 2, pop: 8, fn: function (_h, r) {
-  if (r) { this.g.u32(r, 0); this.g.u32(r + 4, 0); this.g.u32(r + 8, 1280); this.g.u32(r + 12, 720); }
+  if (r) { this.g.u32(r, 0); this.g.u32(r + 4, 0); this.g.u32(r + 8, 2560); this.g.u32(r + 12, 1440); }
   return 1;
 } };
 SHIMS['user32.dll!ShowWindow'] = { arity: 2, pop: 8, fn: () => 1 };
@@ -945,9 +945,9 @@ SHIMS['user32.dll!GetMonitorInfoA'] = { arity: 2, pop: 8, fn: function (_m, info
   if (info) {
     const g = this.g;
     g.u32(info + 4, 0); g.u32(info + 8, 0);
-    g.u32(info + 12, 1280); g.u32(info + 16, 720);
+    g.u32(info + 12, 2560); g.u32(info + 16, 1440);   // the desktop size (win32-more.mjs CURRENT_MODE)
     g.u32(info + 20, 0); g.u32(info + 24, 0);
-    g.u32(info + 28, 1280); g.u32(info + 32, 720);
+    g.u32(info + 28, 2560); g.u32(info + 32, 1440);
     g.u32(info + 36, 1);
   }
   return 1;
@@ -1202,7 +1202,7 @@ SHIMS['gdi32.dll!ExtTextOutA'] = { arity: 8, pop: 32, fn: () => 1 };
 SHIMS['gdi32.dll!ExtTextOutW'] = SHIMS['gdi32.dll!ExtTextOutA'];
 SHIMS['gdi32.dll!GetObjectA'] = { arity: 3, pop: 12, fn: function (_h, n, p) { if (p) this.g.u8.fill(0, p, p + n); return n; } };
 SHIMS['gdi32.dll!GetObjectW'] = SHIMS['gdi32.dll!GetObjectA'];
-SHIMS['gdi32.dll!GetDeviceCaps'] = { arity: 2, pop: 8, fn: (_dc, i) => (i === 88 || i === 90 ? 96 : i === 8 ? 1280 : i === 10 ? 720 : 32) };
+SHIMS['gdi32.dll!GetDeviceCaps'] = { arity: 2, pop: 8, fn: (_dc, i) => (i === 88 || i === 90 ? 96 : i === 8 ? 2560 : i === 10 ? 1440 : 32) };
 SHIMS['gdi32.dll!BitBlt'] = { arity: 9, pop: 36, fn: () => 1 };
 SHIMS['gdi32.dll!StretchBlt'] = { arity: 11, pop: 44, fn: () => 1 };
 SHIMS['gdi32.dll!PatBlt'] = { arity: 6, pop: 24, fn: () => 1 };

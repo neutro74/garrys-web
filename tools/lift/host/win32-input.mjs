@@ -109,10 +109,11 @@ export function installInput(S) {
   def('SetFocus',1,function(w){const g=this.g,s=state(g),old=s.focusWindow??hwnd(g);s.focusWindow=w;
     if(old!==w){if(old)invoke(g,g.userWindows?.get(old)?.proc,[old,8,w,0]);if(w)invoke(g,g.userWindows?.get(w)?.proc,[w,7,old,0]);}return old;});
   const origin=(g,h)=>{let x=0,y=0;const seen=new Set();while(h&&!seen.has(h)){seen.add(h);const w=g.userWindows?.get(h);if(!w)break;x+=w.x|0;y+=w.y|0;h=w.parent;}return {x,y};};
+  // Windows the game did not create (the desktop) report the desktop size, win32-more.mjs CURRENT_MODE.
   def('GetClientRect',2,function(h,p){const g=this.g,w=g.userWindows?.get(h);if(!p)return 0;
-    [0,0,w?.w??1280,w?.h??720].forEach((v,i)=>g.u32(p+i*4,v));return 1;});
+    [0,0,w?.w??2560,w?.h??1440].forEach((v,i)=>g.u32(p+i*4,v));return 1;});
   def('GetWindowRect',2,function(h,p){const g=this.g,w=g.userWindows?.get(h),o=origin(g,h);if(!p)return 0;
-    [o.x,o.y,o.x+(w?.w??1280),o.y+(w?.h??720)].forEach((v,i)=>g.u32(p+i*4,v));return 1;});
+    [o.x,o.y,o.x+(w?.w??2560),o.y+(w?.h??1440)].forEach((v,i)=>g.u32(p+i*4,v));return 1;});
   for(const [name,sign] of [['ClientToScreen',1],['ScreenToClient',-1]])def(name,2,function(h,p){const g=this.g,o=origin(g,h);if(!p)return 0;g.u32(p,g.u32(p)+sign*o.x);g.u32(p+4,g.u32(p+4)+sign*o.y);return 1;});
   const position=(g,h,x,y,w,hgt,flags)=>{const win=g.userWindows?.get(h);if(!win)return 0;
     const moved=!(flags&2)&&(win.x!==(x|0)||win.y!==(y|0)),sized=!(flags&1)&&(win.w!==w||win.h!==hgt);

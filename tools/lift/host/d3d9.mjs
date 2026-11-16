@@ -276,7 +276,8 @@ const METHOD_NAMES = {
 // IDirect3D9
 // ---------------------------------------------------------------------------
 const SUPPORTED_DISPLAY = [FMT.X8R8G8B8, FMT.A8R8G8B8];
-const DISPLAY = { w: 1280, h: 720, hz: 60, fmt: FMT.X8R8G8B8 };
+// Desktop mode: larger than any size the page asks for (see win32-more.mjs CURRENT_MODE).
+const DISPLAY = { w: 2560, h: 1440, hz: 60, fmt: FMT.X8R8G8B8 };
 function createDirect3D(rt, sdk) {
   const g = rt.g;
   const d3d = { sdk, adapters: 1 };
@@ -300,7 +301,7 @@ function createDirect3D(rt, sdk) {
   M[6] = (st, adapter) => (adapter === 0 ? SUPPORTED_DISPLAY.length * 4 : 0);   // GetAdapterModeCount
   M[7] = (st, adapter, fmt, idx, mode) => {              // EnumAdapterModes
     if (adapter !== 0 || !mode) return D3DERR.INVALIDCALL;
-    const modes = [[1920, 1080], [1600, 900], [1366, 768], [1280, 720], [1024, 768], [800, 600]];
+    const modes = [[2560, 1440], [1920, 1080], [1600, 900], [1366, 768], [1280, 720], [1024, 768], [800, 600]];
     const n = idx % modes.length;
     if (idx >= modes.length * 4 || !SUPPORTED_DISPLAY.includes(fmt)) return D3DERR.INVALIDCALL;
     g.u32(mode, modes[n][0]); g.u32(mode + 4, modes[n][1]); g.u32(mode + 8, 60); g.u32(mode + 12, fmt);

@@ -55,9 +55,17 @@ const params = { ...Object.fromEntries(new URLSearchParams(location.search)), ..
 params.mp = params.mp === '0' ? '0' : '1';
 function windowSize() {
   const dpr = Math.max(1, devicePixelRatio || 1), w = innerWidth * dpr, h = innerHeight * dpr, k = Math.min(1, 1920 / w, 1080 / h);
-  return [Math.max(640, Math.round(w * k)) & ~1, Math.max(360, Math.round(h * k)) & ~1];
+  return [Math.max(640, Math.round(w * k)) & ~1, Math.max(480, Math.round(h * k)) & ~1];   // GMod's chat font needs 480 lines
 }
-params.win = windowSize().join('x');
+// A window that fills most of the screen is about to go (or is) fullscreen: the engine takes the screen's size, so
+// fullscreen is sharp even though the engine cannot always change size once running. In the window it is scaled down a little.
+function targetSize() {
+  const dpr = Math.max(1, devicePixelRatio || 1), sw = screen?.width || 0, sh = screen?.height || 0;
+  if (!sw || innerWidth < 0.9 * sw || innerHeight < 0.75 * sh) return windowSize();
+  const k = Math.min(1, 1920 / (sw * dpr), 1080 / (sh * dpr));
+  return [Math.round(sw * dpr * k) & ~1, Math.max(480, Math.round(sh * dpr * k)) & ~1];
+}
+params.win = targetSize().join('x');
 // Later window changes (fullscreen, resizing, moving to another screen) resize the engine too, through the menu's Lua
 // (mat_setvideomode), so the picture is never a stretched copy of the size the game started at. ?res= pins the size.
 if (!params.res) {
@@ -66,10 +74,11 @@ if (!params.res) {
   const follow = (tries = 6) => {
     clearTimeout(timer);
     timer = setTimeout(() => {
-      const [w, h] = windowSize();
+      const [w, h] = targetSize();
       if (!input.w || (w === input.w && h === input.h)) return;
       if (tries > 1) setTimeout(() => follow(tries - 1), 2500);
-      const menu = [...document.querySelectorAll('iframe')].find((f) => { try { return typeof f.contentWindow.AddServer === 'function' && f.contentWindow.lua?.Run; } catch { return false; } });
+      // The newest menu page: while addons remount at startup the menu reloads, and the old page no longer runs anything.
+      const menu = [...document.querySelectorAll('iframe')].filter((f) => { try { return typeof f.contentWindow.AddServer === 'function' && f.contentWindow.lua?.Run; } catch { return false; } }).pop();
       try { menu?.contentWindow.lua.Run('RunConsoleCommand("mat_setvideomode", %s, %s, "1")', String(w), String(h)); } catch { /* menu not ready */ }
     }, 700);
   };

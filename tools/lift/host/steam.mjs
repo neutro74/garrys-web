@@ -365,6 +365,8 @@ function steamMethod(ctx, version, index, args) {
       case 13: return utilsCalls.getResult(g, st, ...args);          // GetAPICallResult
       case 19: return utilsCalls.checkFileSignature(g, st, args[0]); // CheckFileSignature
       case 23: return g.cstr('english');   // GetSteamUILanguage
+      case 31: return 1;                   // InitFilterText: ready (no filtering is done)
+      case 32: return filterText(g, args); // FilterText: chat messages pass through unchanged
       default: return 0;                   // overlay, API-call queries, gamepad text: nothing pending offline
     }
   }
@@ -401,6 +403,9 @@ function steamMethod(ctx, version, index, args) {
       case 27: return 0;                   // IsVRHeadsetStreamingEnabled
       case 28: return 0;                   // SetVRHeadsetStreamingEnabled
       case 29: return 0;                   // IsSteamChinaLauncher
+      case 30: return 1;                   // InitFilterText
+      case 31: return filterText(g, args); // FilterText
+      case 32: return 0;                   // GetIPv6ConnectivityState -> unknown
     }
   }
   return unhandled(ctx, version, index);
@@ -409,9 +414,24 @@ function steamMethod(ctx, version, index, args) {
 // Interface versions the SDK headers here don't cover. The 64-bit SteamAPICall_t arguments take two
 // stack words. SteamUtils010 still has GetCSERIPPort at index 7 (removed in 011), which shifts every
 // later method by one, and its ShowGamepadTextInput has no existing-text parameter.
+// The table must cover every method the game may call: a shorter one sends a call past its end into whatever memory
+// follows (receiving a chat message calls InitFilterText, index 31, which crashed both players).
 const EXTRA_VTABLES = {
-  SteamUtils010: [0, 0, 0, 0, 0, 3, 3, 2, 0, 0, 1, 3, 2, 6, 0, 0, 1, 0, 0, 1, 4, 0, 2, 0, 0, 2],
+  SteamUtils010: [0, 0, 0, 0, 0, 3, 3, 2, 0, 0, 1, 3, 2, 6, 0, 0, 1, 0, 0, 1, 4, 0, 2, 0, 0, 2,
+    // IsSteamInBigPictureMode, StartVRDashboard, IsVRHeadsetStreamingEnabled, SetVRHeadsetStreamingEnabled,
+    // IsSteamChinaLauncher, InitFilterText, FilterText(context, steamid lo/hi, in, out, size), GetIPv6ConnectivityState,
+    // ShowFloatingGamepadTextInput, SetGameLauncherMode, DismissFloatingGamepadTextInput, and spare slots.
+    0, 0, 0, 1, 0, 1, 6, 1, 5, 1, 0, 0, 0, 0, 0, 0],
 };
+// FilterText(eContext, steamid (2 words), pchIn, pchOut, cbOut): copies the text unchanged; returns characters filtered (0).
+function filterText(g, args) {
+  const src = args[3] >>> 0, dst = args[4] >>> 0, cap = args[5] >>> 0;
+  if (!dst || !cap) return 0;
+  let n = 0;
+  if (src) while (n < cap - 1 && g.u8[src + n]) { g.u8[dst + n] = g.u8[src + n]; n++; }
+  g.u8[dst + n] = 0;
+  return 0;
+}
 function arityTable(version) { return EXTRA_VTABLES[version] || STEAM_VTABLES[version]; }
 const canonicalVersion = (version) => version;
 

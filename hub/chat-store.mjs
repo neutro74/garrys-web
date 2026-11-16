@@ -19,7 +19,8 @@ export function createChatStore({ dir = path.join(process.env.WS_CACHE ?? './ws-
     let fd;
     try { fd = fs.openSync(file, 'r'); } catch { return { messages: [], done: true }; }
     try {
-      const size = fs.fstatSync(fd).size, out = [];
+      const size = fs.fstatSync(fd).size, out = [], gone = new Set();
+      let cleared = false;
       let end = size, carry = Buffer.alloc(0);
       while (end > 0 && out.length < n) {
         const start = Math.max(0, end - 65536), buf = Buffer.alloc(end - start);
@@ -28,17 +29,25 @@ export function createChatStore({ dir = path.join(process.env.WS_CACHE ?? './ws-
         carry = cut >= 0 ? data.subarray(0, cut) : Buffer.alloc(0);
         if (cut >= 0) data = data.subarray(cut + 1);
         const lines = data.toString('utf8').split('\n').filter(Boolean);
-        for (let i = lines.length - 1; i >= 0 && out.length < n; i--) {
-          try { const m = JSON.parse(lines[i]); if (m.at < before) out.push(m); } catch { /* a torn line */ }
+        for (let i = lines.length - 1; i >= 0 && out.length < n && !cleared; i--) {
+          let m; try { m = JSON.parse(lines[i]); } catch { continue; }   // a torn line
+          // Moderation marks (hub/admin.mjs), read before the messages they apply to since the file is read backwards.
+          if (m.del) { gone.add(m.del); continue; }
+          if (m.clear) { cleared = true; break; }
+          if (m.at < before && !gone.has(m.id)) out.push(m);
         }
         end = start;
       }
+      if (cleared) return { messages: out.reverse(), done: true };
       return { messages: out.reverse(), done: out.length < n };
     } finally { fs.closeSync(fd); }
   }
 
   return {
     saveRoom(room, msg) { append(roomFile(room), msg); },
+    // Moderation: hide one message (by id) or everything said in the room so far. The file keeps them; reads skip them.
+    deleteRoomMessage(room, id) { append(roomFile(room), { del: String(id), at: Date.now() }); },
+    clearRoom(room) { append(roomFile(room), { clear: true, at: Date.now() }); },
     room(room, n = 100, before) { return page(roomFile(room), n, before); },
     saveDm(a, b, msg) { append(dmFile(a, b), msg); },
     dm(a, b, n = 100, before) { return page(dmFile(a, b), n, before); },

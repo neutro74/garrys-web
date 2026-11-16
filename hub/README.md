@@ -19,6 +19,14 @@ One small Node server (no dependencies) for the browser build's online features:
   for them and hands the game real login tickets, which regular Garry's Mod servers require. This is the only part that
   needs packages (`steam-session`, `steam-user`, `qrcode`: `npm install` in `hub/`); without them the rest runs as before.
 
+- **Admin panel** (`hub/admin.mjs`, `web/admin.js`): for accounts in `ADMIN_USERS` (default `neutro74`), unlocked with an
+  authenticator-app code. Bans and mutes by browser id, address and/or account; kick; delete or clear chat; announcements;
+  close games; sign accounts out everywhere; hub status, log and restart; an audit log of every admin action; and a terminal
+  on the Pi (`hub/term-pty.py` runs `ssh ADMIN_SSH_TARGET` in a pty with the hub's own key, which `authorized_keys` only
+  accepts from 127.0.0.1). The authenticator is enrolled on the Pi, so a stolen password alone cannot enroll one:
+  `sudo -u gmodhub env WS_CACHE=/var/lib/gmod-hub node /opt/gmod-hub/admin.mjs enroll <user> [--force]` prints the
+  `otpauth://` link to scan.
+
 ## Running it
 
 ```
@@ -33,6 +41,7 @@ PORT=8787 node hub/hub.mjs
 | `STEAM_KEY` | Steam Web API key; needed only for Workshop browsing and search (item details and downloads work without). |
 | `WS_CACHE` | Directory for downloaded `.gma` files (default `./ws-cache`). |
 | `DEPOT_DOWNLOADER` | Path to the DepotDownloader binary. |
+| `ADMIN_USERS`, `ADMIN_SSH_TARGET` | Admin accounts (default `neutro74`) and where the admin terminal connects (default `davidc@127.0.0.1`). |
 | `WS_MAX_ITEM`, `WS_MAX_CACHE`, `WS_MAX_AGE_DAYS`, `WS_PER_IP_HOUR` | Largest item (8 GB), cache size (30 GB), days an unused file is kept (7), downloads per address per hour (30). |
 
 The page finds the hub from `?hub=wss://…` (remembered), else `HUB_DEFAULT` in `web/hub.js`.
@@ -43,7 +52,7 @@ The page finds the hub from `?hub=wss://…` (remembered), else `HUB_DEFAULT` in
 `/etc/gmod-hub.env` (`STEAM_KEY=...`, mode 600). Tailscale Funnel gives it a public HTTPS/WSS address:
 
 ```
-sudo install -m 644 hub/*.mjs /opt/gmod-hub/
+sudo install -m 644 hub/*.mjs hub/term-pty.py /opt/gmod-hub/
 (cd hub && npm install --omit=dev) && sudo cp -r hub/node_modules hub/package.json /opt/gmod-hub/   # Steam sign-in only
 sudo install -m 644 hub/gmod-hub.service /etc/systemd/system/ && sudo systemctl daemon-reload
 sudo systemctl restart gmod-hub

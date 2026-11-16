@@ -88,5 +88,10 @@ export function createAccounts({ dir = path.join(process.env.WS_CACHE ?? './ws-c
     return a?.tokens?.some((t) => t.h === h) ? u : null;
   };
   handle.exists = (user) => USER.test(String(user ?? '')) && fs.existsSync(file(String(user)));
+  // For the admin panel (hub/admin.mjs): every account, and signing one out everywhere.
+  handle.list = () => fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => read(f.slice(0, -5))).filter(Boolean)
+    .map((a) => ({ user: a.user, created: a.created ?? 0, updated: a.updated ?? 0, sessions: (a.tokens ?? []).length, lastLogin: Math.max(0, ...(a.tokens ?? []).map((t) => t.at ?? 0)) }))
+    .sort((x, y) => y.lastLogin - x.lastLogin);
+  handle.signOutAll = (user) => { const a = USER.test(user) && read(user); if (!a) throw Error('No such account.'); a.tokens = []; write(a); };
   return handle;
 }

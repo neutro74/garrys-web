@@ -14,11 +14,13 @@ import { createAccounts } from './accounts.mjs';
 import { createServers } from './servers.mjs';
 import { createSteamLogin } from './steam-login.mjs';
 import { createChatStore } from './chat-store.mjs';
+import { createAdmin } from './admin.mjs';
 
 const PORT = +(process.env.PORT ?? 8787), HOST = process.env.HOST ?? '0.0.0.0';
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
 const ORIGINS = (process.env.ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 const ROOMS = ['general', 'help', 'looking-for-game', 'off-topic'];
+const MUTED = new Set(['say', 'dm', 'nick', 'host']);
 const LIMITED = new Set(['say', 'dm', 'nick', 'hello', 'host', 'room-history', 'dm-history']);
 const LIMITS = { clients: 500, perIp: 6, frame: 64 * 1024, text: 400, name: 24, history: 60, lobbies: 100, burst: 6, refillMs: 1500 };
 
@@ -34,7 +36,7 @@ class Conn {
   constructor(socket, ip) {
     this.socket = socket; this.ip = ip; this.buf = Buffer.alloc(0); this.parts = []; this.closed = false;
     this.id = crypto.randomBytes(6).toString('base64url'); this.name = null; this.rooms = new Set(); this.watching = false;
-    this.tokens = LIMITS.burst; this.last = Date.now(); this.alive = true;
+    this.tokens = LIMITS.burst; this.last = Date.now(); this.alive = true; this.since = Date.now();
     socket.setNoDelay(true);
     socket.on('data', (d) => this.data(d));
     socket.on('close', () => this.gone());
@@ -83,6 +85,7 @@ class Conn {
     this.tokens -= 1; return true;
   }
   message(text) {
+    if (this.onText) return this.onText(text);   // the admin terminal
     if (this.relay) return;
     let m;
     try { m = JSON.parse(text); } catch { return this.send({ t: 'error', error: 'Bad message' }); }
@@ -97,6 +100,7 @@ class Conn {
     this.gone_ = true; this.closed = true;
     if (this.relay) { relays.delete(this); this.onClose?.(); return; }
     clients.delete(this);
+    if (this.name) admin.seen(this);
     for (const r of this.rooms) leaveRoom(this, r);
     for (const [id, l] of lobbies) if (l.host === this) dropLobby(id);
   }
@@ -151,9 +155,12 @@ function handle(c, m) {
   if (m.t === 'hello') {
     const name = clean(m.name, LIMITS.name);
     if (name.length < 2) throw Error('Pick a name of at least 2 characters.');
-    c.name = name;
+    c.name = name; c.device = /^\d{1,12}$/.test(String(m.device ?? '')) ? String(m.device) : null;
+    admin.seen(c);
+    if (refuseBanned(c)) return;
     return c.send({ t: 'welcome', id: c.id, name, rooms: roomList(), online: clients.size });
   }
+  if (MUTED.has(m.t)) { const mu = admin.muted(c); if (mu) throw Error(`You are muted${mu.until ? ' until ' + new Date(mu.until).toUTCString() : ''}${mu.reason ? ': ' + mu.reason : ''}.`); }
   if (!c.name) throw Error('Say hello first.');
   switch (m.t) {
     case 'rooms': return c.send({ t: 'rooms', rooms: roomList(), online: clients.size });
@@ -170,7 +177,7 @@ function handle(c, m) {
       const r = rooms.get(m.room), text = clean(m.text, LIMITS.text);
       if (!r?.members.has(c)) throw Error('Join the room first.');
       if (!text) return;
-      const msg = { t: 'msg', room: m.room, from: user(c), text, at: Date.now() };
+      const msg = { t: 'msg', id: crypto.randomBytes(6).toString('base64url'), room: m.room, from: user(c), text, at: Date.now() };
       r.history.push(msg); if (r.history.length > LIMITS.history) r.history.shift();
       keep(() => chat.saveRoom(m.room, msg));
       return toRoom(m.room, msg);
@@ -193,6 +200,8 @@ function handle(c, m) {
     case 'auth': {
       const u = accounts.verify(m.user, m.token);
       c.account = u ?? null;
+      admin.seen(c);
+      if (refuseBanned(c)) return;
       return c.send({ t: 'authed', user: u ?? null });
     }
     case 'dm': {
@@ -251,7 +260,38 @@ process.on('uncaughtException', (err) => {
   console.error(err); process.exit(1);
 });
 const workshop = createWorkshop(), versions = createVersions(), accounts = createAccounts(), servers = createServers({ log: console.log }), steamLogin = createSteamLogin({ log: console.log });
+// ---- Admin (hub/admin.mjs) --------------------------------------------------------------------------------------------
+const admin = createAdmin({ accounts, hub: {
+  counts: () => ({ clients: clients.size, relays: relays.size, pairs: pairs.size, lobbyCount: lobbies.size }),
+  clients: () => [...clients].filter((c) => c.name),
+  lobbies: () => [...lobbies].map(([id, l]) => ({ ...lobbyView(id, l), hostIp: l.host.ip, hostDevice: l.host.device ?? null, hostAccount: l.host.account ?? null })),
+  roomNames: () => ROOMS.map((name) => { let messages = []; try { messages = chat.room(name, 60).messages; } catch { /* none */ } return { name, users: rooms.get(name).members.size, messages }; }),
+  kickWhere(pred, msg) {
+    let n = 0;
+    for (const c of [...clients, ...relays]) if (pred({ id: c.id, ip: c.ip, device: c.device, account: c.account }) && !c.onText) { if (!c.relay) c.send(msg); c.close(4000); n++; }
+    return n;
+  },
+  deleteMessage(room, id) {
+    const r = rooms.get(room); if (!r) throw Error('No such room.');
+    chat.deleteRoomMessage(room, id); r.history = r.history.filter((x) => x.id !== id); toRoom(room, { t: 'msg-deleted', room, id });
+  },
+  clearRoom(room) { const r = rooms.get(room); if (!r) throw Error('No such room.'); chat.clearRoom(room); r.history = []; toRoom(room, { t: 'room-cleared', room }); },
+  announce(text) { for (const c of clients) if (c.name) c.send({ t: 'notice', text, at: Date.now() }); return clients.size; },
+  closeLobby(id) { const l = lobbies.get(id); if (!l) throw Error('That game is already closed.'); l.host.send({ t: 'lobby-closed', id }); dropLobby(id); },
+} });
+// A banned player's socket is told why, then closed (the page stops reconnecting).
+function refuseBanned(c) {
+  const b = admin.banned({ ip: c.ip, device: c.device, account: c.account });
+  if (!b) return false;
+  c.send({ t: 'banned', ...admin.banInfo(b) }); c.close(4003); return true;
+}
 const server = http.createServer(async (req, res) => {
+  if (await admin(req, res, { ip: clientIp(req), headers: cors(req) })) return;
+  const ban = admin.banned({ ip: clientIp(req) });
+  if (ban && req.method !== 'OPTIONS' && req.url !== '/health') {
+    res.writeHead(403, { 'Content-Type': 'application/json', ...cors(req) });
+    return res.end(JSON.stringify({ error: 'You are banned from Garry\'s Web.', banned: true, ...admin.banInfo(ban) }));
+  }
   if (await workshop(req, res, { ip: clientIp(req), headers: cors(req) })) return;
   if (await versions(req, res, { ip: clientIp(req), headers: cors(req) })) return;
   if (await accounts(req, res, { ip: clientIp(req), headers: cors(req) })) return;
@@ -268,7 +308,14 @@ server.on('upgrade', (req, socket) => {
   const key = req.headers['sec-websocket-key'];
   if (!key || String(req.headers.upgrade).toLowerCase() !== 'websocket') return reject(400, 'Bad Request');
   if (!originOk(req.headers.origin)) return reject(403, 'Forbidden');
-  const ip = clientIp(req);
+  const ip = clientIp(req), ipBan = admin.banned({ ip });
+  if (req.url.startsWith('/admin/term')) {
+    if (relays.size >= 300) return reject(429, 'Too Many Connections');
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${crypto.createHash('sha1').update(key + GUID).digest('base64')}\r\n\r\n`);
+    const c = new Conn(socket, ip); c.relay = true; admin.terminal(c);
+    return;
+  }
+  if (ipBan && (req.url.startsWith('/udp') || req.url.startsWith('/pair'))) return reject(403, 'Forbidden');
   if (req.url.startsWith('/udp')) {
     if (relays.size >= 200 || [...relays].filter((c) => c.ip === ip && !c.pair).length >= 2) return reject(429, 'Too Many Connections');
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${crypto.createHash('sha1').update(key + GUID).digest('base64')}\r\n\r\n`);

@@ -36,10 +36,10 @@ export class Hub extends EventTarget {
     let ws;
     try { ws = new WebSocket(this.url); } catch { this.setState('offline'); return; }
     this.ws = ws;
-    ws.onopen = () => { this.retry = 0; this.send({ t: 'hello', name: this.name }); };
+    ws.onopen = () => { this.retry = 0; this.send({ t: 'hello', name: this.name, device: playerId() }); };   // device: this browser's id, for moderation
     ws.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } this.message(m); };
     ws.onclose = () => {
-      this.ws = null; this.me = null; this.setState('offline');
+      this.ws = null; this.me = null; if (!this.banned) this.setState('offline');
       if (this.closing) return;
       const wait = Math.min(30000, 1000 * 2 ** this.retry++);   // back off; a hub restart reconnects everyone
       this.timer = setTimeout(() => this.connect(), wait);
@@ -62,6 +62,9 @@ export class Hub extends EventTarget {
     }
     if (m.t === 'rooms') { this.roomList = m.rooms; this.online = m.online; }
     if (m.t === 'authed') this.account = m.user;
+    // Banned by an admin (hub/admin.mjs): the hub closes the socket; trying again would only be refused.
+    if (m.t === 'banned') { this.banned = m; this.closing = true; this.setState('banned'); }
+    if (m.t === 'lobby-closed') this.lobby = null;
     this.emit(m.t, m);
   }
   // Signed in to a Garry's Web account (Profile, web/account.js): the chat socket signs in too, for private messages.

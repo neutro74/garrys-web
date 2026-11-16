@@ -262,3 +262,52 @@ body { background: #000; }
   #launcher .backdrop .slide { animation: none !important; transform: scale(1.04); }
   #launcher .walk { animation: none; }
 }
+
+/* ---- Admin panel (web/admin.js): a full-window overlay in the panels' style ---- */
+#launcher .admin-overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(0,0,0,.55); }
+#launcher .panel.admin { position: relative; width: min(1100px, 100%); height: min(760px, 100%); max-height: none; }
+#launcher .panel.admin .panel-head .lock { margin-left: auto; font-size: 13px; font-weight: normal; color: #08c; }
+#launcher .panel.admin .panel-head .lock + .x { margin-left: 10px; }
+#launcher .panel.admin .panel-head .lock[hidden] + .x { margin-left: auto; }
+#launcher .panel.admin .panel-body { flex: 1 1 auto; overflow: auto; }
+#launcher .panel.admin.terminal .panel-body { padding: 0; overflow: hidden; display: flex; }
+#launcher .panel.admin h3 { margin: 14px 0 6px; font-size: 15px; color: #444; }
+#launcher .panel.admin h3:first-child { margin-top: 0; }
+#launcher .panel.admin h3 small { color: #888; font-weight: normal; }
+#launcher .panel.admin table.grid { width: 100%; border-collapse: collapse; font-size: 13px; }
+#launcher .panel.admin table.grid th { text-align: left; color: #777; font-weight: bold; font-size: 12px; padding: 4px 6px; border-bottom: 1px solid #ccc; }
+#launcher .panel.admin table.grid td { padding: 5px 6px; border-bottom: 1px solid #eee; vertical-align: top; }
+#launcher .panel.admin td.acts { text-align: right; white-space: nowrap; }
+#launcher .panel.admin td.acts .btn, #launcher .panel.admin .row .btn { padding: 3px 9px; font-size: 12px; border-radius: 3px; cursor: pointer; margin-left: 4px; }
+#launcher .panel.admin .none { color: #999; font-style: italic; }
+#launcher .panel.admin code { font-size: 11px; color: #555; background: #f2f2f2; padding: 0 3px; border-radius: 2px; }
+#launcher .panel.admin .acct { color: #08c; font-size: 12px; }
+#launcher .panel.admin .badge { background: #08c; color: #fff; border-radius: 3px; padding: 0 4px; font-size: 10px; }
+#launcher .panel.admin .btn.danger { color: #fff; background: linear-gradient(#e55, #c33); border-color: #b22; }
+#launcher .panel.admin .btn.danger:hover { background: #c33; }
+#launcher .panel.admin .btn.on { background: #ddd; box-shadow: inset 0 1px 3px rgba(0,0,0,.2); }
+#launcher .panel.admin .btn-primary { padding: 5px 12px; border-radius: 3px; cursor: pointer; }
+#launcher .panel.admin form.inline { display: flex; gap: 6px; margin: 4px 0 10px; }
+#launcher .panel.admin form.inline input, #launcher .panel.admin form.inline select, #launcher .admin .dialog input, #launcher .admin .dialog select { padding: 5px 7px; border: 1px solid #abadb3; border-radius: 3px; font: 13px "Helvetica Neue", Helvetica, Arial, sans-serif; }
+#launcher .panel.admin form.inline input { flex: 1; min-width: 0; }
+#launcher .panel.admin .rooms { margin-bottom: 8px; align-items: center; }
+#launcher .panel.admin .msgs { font-size: 13px; line-height: 1.45; }
+#launcher .panel.admin .msgs > div { padding: 2px 0; border-bottom: 1px solid #f2f2f2; }
+#launcher .panel.admin .msgs time { color: #aaa; font-size: 11px; }
+#launcher .panel.admin .mini { border: 0; background: none; color: #c33; cursor: pointer; font-size: 12px; }
+#launcher .panel.admin .logbox { background: #1e1e1e; color: #ddd; font: 12px ui-monospace, Menlo, Consolas, monospace; padding: 8px; border-radius: 4px; max-height: 360px; overflow: auto; white-space: pre-wrap; }
+#launcher .panel.admin .logbox .error { color: #f88; }
+#launcher .panel.admin .logbox .warn { color: #fd6; }
+#launcher .admin .unlock { max-width: 320px; margin: 60px auto; text-align: center; display: grid; gap: 10px; }
+#launcher .admin .unlock input { font-size: 28px; letter-spacing: 6px; text-align: center; padding: 8px; border: 1px solid #abadb3; border-radius: 4px; }
+#launcher .admin .unlock .btn-primary { font-size: 15px; padding: 8px; }
+#launcher .admin .dialog { position: absolute; z-index: 2; top: 60px; left: 50%; transform: translateX(-50%); width: min(420px, 92%); background: #fff; border: 1px solid #bbb; border-radius: 6px; box-shadow: 0 6px 30px rgba(0,0,0,.4); padding: 12px 14px; display: grid; gap: 8px; font-size: 13px; }
+#launcher .admin .dialog .opts { display: grid; gap: 4px; }
+#launcher .admin .dialog label.off { color: #999; }
+#launcher .panel.admin .err { flex: none; padding: 6px 12px; background: #fdd; color: #900; border-bottom: 1px solid #e99; font-size: 13px; }
+#launcher .admin .dialog label { display: flex; gap: 6px; align-items: center; }
+#launcher .admin .dialog label input[data-reason] { flex: 1; }
+#launcher .admin .termwrap { flex: 1; display: flex; flex-direction: column; min-height: 0; background: #1e1e1e; }
+#launcher .admin .termbar { flex: none; display: flex; gap: 10px; align-items: center; padding: 4px 10px; color: #bbb; font-size: 12px; background: #2a2a2a; }
+#launcher .admin .term { flex: 1; min-height: 0; padding: 4px 0 0 6px; }
+@media (max-width: 700px) { #launcher .admin-overlay { padding: 0; } #launcher .panel.admin { border-radius: 0; height: 100%; } }

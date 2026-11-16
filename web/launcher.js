@@ -344,10 +344,10 @@ function chatPanel(el, hub) {
     show(); text.focus();
   }
   const state = (s) => {
-    stateEl.textContent = { connecting: 'connecting…', online: hub.online ? `${hub.online} online` : 'online', offline: 'offline, retrying…', off: '' }[s] ?? '';
+    stateEl.textContent = { connecting: 'connecting…', online: hub.online ? `${hub.online} online` : 'online', offline: 'offline, retrying…', off: '', banned: 'banned' }[s] ?? '';
     const ok = s === 'online' && (!priv() || !!hub.account);
     text.disabled = !ok;
-    text.placeholder = s === 'off' ? 'Chat is not set up for this copy of the game.' : s !== 'online' ? 'Connecting to chat…'
+    text.placeholder = s === 'off' ? 'Chat is not set up for this copy of the game.' : s === 'banned' ? 'You are banned from chat.' : s !== 'online' ? 'Connecting to chat…'
       : priv() ? (!hub.account ? 'Sign in (Profile) for private chats' : peer ? `Message ${peer}` : 'Message') : `Message #${ROOMS.find(([id]) => id === room)[1]}`;
   };
   // Scrolling to the top loads older messages (rooms and private chats are both kept on the hub).
@@ -369,6 +369,12 @@ function chatPanel(el, hub) {
     hub.on('left', (m) => { users.get(m.room)?.delete(m.user.id); tabs(); }),
     hub.on('nick', (m) => { users.get(m.room)?.set(m.user.id, m.user.name); if (m.old !== m.user.name) add(m.room, { sys: `${m.old} is now ${m.user.name}` }); }),
     hub.on('msg', (m) => add(m.room, m)),
+    // Moderation (hub/admin.mjs): a removed message, a cleared room, an announcement, a ban or kick.
+    hub.on('msg-deleted', (m) => { const l = logs.get(m.room); if (!l) return; const i = l.findIndex((x) => x.id === m.id); if (i >= 0) { l.splice(i, 1); if (m.room === room && !priv()) show(); } }),
+    hub.on('room-cleared', (m) => { logs.set(m.room, []); done.set(m.room, true); if (m.room === room && !priv()) show(); }),
+    hub.on('notice', (m) => { for (const [id] of ROOMS) add(id, { sys: `📢 ${m.text}` }); }),
+    hub.on('banned', (m) => { const why = `You are banned from chat${m.until ? ' until ' + new Date(m.until).toLocaleString() : ''}${m.reason ? ': ' + m.reason : ''}.`; for (const [id] of ROOMS) add(id, { sys: why }); state('banned'); }),
+    hub.on('kicked', (m) => { add(room, { sys: `You were removed from chat${m.reason ? ': ' + m.reason : ''}.` }); }),
     hub.on('dms', (m) => { convos = m.list; for (const c of convos) if (c.last.from !== hub.account && c.last.at > +store.get(`dm-seen-${c.with}`, '0')) unreadDm.add(c.with); if (priv() && !peer) show(); else tabs(); }),
     hub.on('dm-history', (m) => {
       loadingOlder = false; dmDone.set(m.with, m.done);
@@ -590,6 +596,14 @@ function menu(ext, backdrop, opts = {}) {
       else if (panel === 'controls') controlsPanel(panelEl);
       panelEl.querySelector('[data-close]')?.addEventListener('click', (ev) => { ev.preventDefault(); openPanel(panel); });
     };
+    // Admin accounts get an Admin entry (web/admin.js); the hub decides who is one.
+    import('./admin.js').then(async ({ isAdmin, openAdmin }) => {
+      if (!(await isAdmin()) || !page.isConnected) return;
+      const li = document.createElement('li'); li.className = 'sub';
+      li.innerHTML = '<a href="#" data-admin>Admin</a>';
+      page.querySelector('[data-open="fullscreen"]').closest('li').before(li);
+      li.firstChild.addEventListener('click', (ev) => { ev.preventDefault(); openAdmin(root); });
+    }).catch(() => {});
     const fsLabel = () => { const a = page.querySelector('[data-open="fullscreen"]'); if (a) a.textContent = document.fullscreenElement ? 'Leave Fullscreen' : 'Fullscreen'; };
     document.addEventListener('fullscreenchange', fsLabel);
     for (const a of page.querySelectorAll('[data-open]')) a.addEventListener('click', (ev) => { ev.preventDefault(); openPanel(a.dataset.open); });
@@ -642,6 +656,7 @@ function menu(ext, backdrop, opts = {}) {
     // Typing in a panel (chat) is left alone; Esc there closes the panel.
     const onKey = (ev) => {
       if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
+      if (ev.target?.closest?.('.admin-overlay')) return;   // the admin panel and its terminal take their own keys
       const k = ev.key, typing = /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(ev.target?.tagName) && panelEl.contains(ev.target);
       if (k === 'Escape') { if (!popup.hidden) popup.hidden = true; else if (panel) openPanel(panel); return; }
       if (typing || panelEl.contains(ev.target)) return;

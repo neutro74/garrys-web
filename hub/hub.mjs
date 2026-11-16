@@ -243,6 +243,13 @@ function handle(c, m) {
 const clientIp = (req) => (TRUST_PROXY && (req.headers['cf-connecting-ip'] || String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim())) || req.socket.remoteAddress;
 const originOk = (o) => !ORIGINS.length || ORIGINS.includes(o);
 const cors = (req) => ({ 'Access-Control-Allow-Origin': originOk(req.headers.origin) && req.headers.origin ? req.headers.origin : ORIGINS[0] ?? '*', Vary: 'Origin' });
+// The Steam libraries (steam-session/steam-user and their websocket13 transport) can throw from their own socket callbacks
+// (seen: "Cannot read properties of null (reading 'setTimeout')" in WebSocketCMTransport), which would take down chat and
+// lobbies with them. Log those and carry on; anything else still crashes the hub so systemd restarts it.
+process.on('uncaughtException', (err) => {
+  if (/[\\/]node_modules[\\/](steam-|websocket13)/.test(String(err?.stack))) { console.error('steam library error (ignored):', err); return; }
+  console.error(err); process.exit(1);
+});
 const workshop = createWorkshop(), versions = createVersions(), accounts = createAccounts(), servers = createServers({ log: console.log }), steamLogin = createSteamLogin({ log: console.log });
 const server = http.createServer(async (req, res) => {
   if (await workshop(req, res, { ip: clientIp(req), headers: cors(req) })) return;

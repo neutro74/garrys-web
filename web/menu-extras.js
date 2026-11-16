@@ -320,9 +320,9 @@ async function serverBrowser() {
   };
   window.__gwMessage = message;
   // Real servers need a real Steam login (Profile -> Sign in with Steam in the launcher, web/steam-account.js).
-  window.__gwJoinReal = (address) => {
-    let signedIn = false;
-    try { signedIn = !!JSON.parse(localStorage.getItem('garrys-wasm.steam') ?? 'null')?.key; } catch { /* storage blocked */ }
+  // This frame is credentialless (its own empty storage), so the page answers whether the game started signed in.
+  window.__gwJoinReal = async (address) => {
+    const signedIn = await host('steam-signed-in').catch(() => false);
     if (!signedIn) {
       message("This server is not a Garry's Web game. Servers like it check that every player is signed in to Steam with a copy of Garry's Mod. To join them, quit to the launcher, open Profile and choose Sign in with Steam (optional). Garry's Web games can be joined without it.", "Steam sign-in needed");
       return;

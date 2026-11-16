@@ -15,7 +15,7 @@ export function decodeBackup(buffer){const b=new Uint8Array(buffer),dv=new DataV
 const DISABLED='garrys-wasm.disabled-addons';
 const disabledAddons=()=>{try{const v=JSON.parse(localStorage.getItem(DISABLED)??'[]');return Array.isArray(v)?v:[];}catch{return [];}};
 // session: { version (a custom game version or null), active (Set of library names mounted in this launch) }.
-export function menuHost(storage,p2p,{edition='base',startedOff='',lobby=null,session={version:null,active:new Set()}}={}){
+export function menuHost(storage,p2p,{edition='base',startedOff='',lobby=null,session={version:null,active:new Set()},steamSignedIn=()=>false}={}){
  const wsProgress=new Map();
  // A newly installed addon joins this launch's set: the version's list, or the plain edition's "my addons".
  const addToSession=(name,info)=>{session.active.add(name);if(session.version){const v=getVersion(session.version.id)??session.version;if(!v.addons.some(a=>a.name===name))v.addons.push({name,id:info.id,title:info.title,size:info.size});session.version=putVersion(v);}else updateMeta(name,{global:true});};
@@ -63,6 +63,8 @@ export function menuHost(storage,p2p,{edition='base',startedOff='',lobby=null,se
    case 'server-list':return hubJson('servers');
    case 'server-info':return hubJson('servers/info?addr='+encodeURIComponent(String(args.addr)));
    case 'server-players':return hubJson('servers/players?addr='+encodeURIComponent(String(args.addr)));
+   // Steam sign-in lives in the page's storage; the menu frame is credentialless and cannot read it.
+   case 'steam-signed-in':return !!steamSignedIn();
    case 'lobby-status':if(!lobby?.available)return {disabled:true};lobby.connect();return lobby.status();
    case 'lobby-host':if(!lobby)throw Error('Peer-to-peer play is not enabled');return lobby.host(args);
    case 'lobby-unhost':if(!lobby)throw Error('Peer-to-peer play is not enabled');return lobby.unhost();

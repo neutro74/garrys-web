@@ -145,7 +145,7 @@ const p2p = params.mp === '1' ? new P2P({ edition, internet: !!hubUrl(), identit
 const lobby = p2p ? new Lobby(p2p, { edition }) : null;
 window.__p2p = p2p;
 window.__lobby = lobby;
-panels.host = menuHost(storage, p2p, { edition, lobby, session, startedOff: String(params.disabledAddons ?? '').split(',').filter(Boolean).sort().join(',') });
+panels.host = menuHost(storage, p2p, { edition, lobby, session, steamSignedIn: () => !!steamAcct, startedOff: String(params.disabledAddons ?? '').split(',').filter(Boolean).sort().join(',') });
 // Guest threads: workers ask the page to start them (a blocked worker cannot start one itself). Each thread
 // worker announces 'thread-ready' and then receives its init data; it may ask for further threads in turn.
 const threads = new Map();

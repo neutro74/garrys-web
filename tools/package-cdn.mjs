@@ -42,6 +42,8 @@ export function packageCdn({input,out,have}){
  const page=fs.readFileSync(path.join(repo,'web/index.html'),'utf8').replaceAll('"/web/brand/','"brand/').replace('<link rel="stylesheet" href="/web/launcher.css">','<link rel="stylesheet" href="launcher.css">').replace('<script type="module" src="/web/launcher.js"></script>',
   `<script type="module">import {ensureCdnIsolation} from './cdn-isolation.js';\nif(await ensureCdnIsolation()){const {MODULES}=await import('./modules.js');navigator.serviceWorker.controller?.postMessage({type:'prefetch',prefixes:['web/','tools/','runtime/','ports/',...MODULES.map(m=>'out/'+m+'-thread.'),'out/'],warm:true,workers:navigator.hardwareConcurrency<=2?3:8});await import('./launcher.js');}else document.getElementById('status').textContent='Cross-origin isolation is unavailable (service workers blocked?). A hard reload (Ctrl+Shift+R) bypasses it: reload normally or reopen the link.';</script>`);
  fs.writeFileSync(path.join(out,'web/index.html'),page);
+ // Icons as plain files too: browsers fetch the tab icon outside the service worker, so it must exist on the CDN itself.
+ for(const f of fs.readdirSync(path.join(repo,'web/brand')))if(/\.(ico|png)$/.test(f))copy(path.join(repo,'web/brand',f),path.join(out,'web/brand',f));
  fs.writeFileSync(path.join(out,'index.html'),'<!doctype html><meta charset="utf-8"><title>Garry\'s Web</title><link rel="icon" href="web/brand/favicon.ico"><meta http-equiv="refresh" content="0;url=web/index.html"><a href="web/index.html">Garry\'s Web</a>');
  // Chunks a boot-to-map run reads (tools/make-warm-list.mjs), by content hash and first-read order.
  const warmFile=path.join(repo,'tools/cdn-warm.json'),warm=[];

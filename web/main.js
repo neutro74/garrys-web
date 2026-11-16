@@ -53,9 +53,28 @@ const params = { ...Object.fromEntries(new URLSearchParams(location.search)), ..
 // within 1920x1080 with the window's shape kept. It follows the window on every start (launch-config.mjs).
 // Multiplayer (server browser, hosting, joining) is on unless ?mp=0.
 params.mp = params.mp === '0' ? '0' : '1';
-{
+function windowSize() {
   const dpr = Math.max(1, devicePixelRatio || 1), w = innerWidth * dpr, h = innerHeight * dpr, k = Math.min(1, 1920 / w, 1080 / h);
-  params.win = `${Math.max(640, Math.round(w * k)) & ~1}x${Math.max(360, Math.round(h * k)) & ~1}`;
+  return [Math.max(640, Math.round(w * k)) & ~1, Math.max(360, Math.round(h * k)) & ~1];
+}
+params.win = windowSize().join('x');
+// Later window changes (fullscreen, resizing, moving to another screen) resize the engine too, through the menu's Lua
+// (mat_setvideomode), so the picture is never a stretched copy of the size the game started at. ?res= pins the size.
+if (!params.res) {
+  let timer = 0;
+  // Retried a few times: a command sent while a map loads can be lost.
+  const follow = (tries = 6) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const [w, h] = windowSize();
+      if (!input.w || (w === input.w && h === input.h)) return;
+      if (tries > 1) setTimeout(() => follow(tries - 1), 2500);
+      const menu = [...document.querySelectorAll('iframe')].find((f) => { try { return typeof f.contentWindow.AddServer === 'function' && f.contentWindow.lua?.Run; } catch { return false; } });
+      try { menu?.contentWindow.lua.Run('RunConsoleCommand("mat_setvideomode", %s, %s, "1")', String(w), String(h)); } catch { /* menu not ready */ }
+    }, 700);
+  };
+  addEventListener('resize', () => follow());
+  document.addEventListener('fullscreenchange', () => follow());
 }
 // This browser's player identity: a random Steam account id (kept, so saves and bans stay with the player) and the name
 // chosen in the launcher's chat, used in game (steam.mjs).

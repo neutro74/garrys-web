@@ -1,0 +1,320 @@
+[
+ {
+  "name": "ragdoll_mover",
+  "id": "104575630",
+  "title": "Ragdoll Mover",
+  "type": "tool",
+  "tags": [],
+  "author": "Author Name",
+  "size": 410212,
+  "description": "What is it? Ragdoll Mover is a tool that allows you to move ragdolls in a similar way to 3D programs. This also includes IK chains. Why should I use it? If you are fine with physgun, then maybe you don't need to use this. But here's a few k",
+  "preview": "wasm-addons/ragdoll_mover.jpg"
+ },
+ {
+  "name": "zombie_survival",
+  "id": "105462463",
+  "title": "Zombie Survival",
+  "type": "gamemode",
+  "tags": [
+   "fun",
+   "build"
+  ],
+  "author": "Author Name",
+  "size": 70177749,
+  "description": "About Zombie Survival is a massive gamemode where humans are pit against a zombie horde. Once a human dies, they become a zombie. The game ends when all the humans are (un)dead or the humans survive a certain amount of time or complete obje",
+  "preview": "wasm-addons/zombie_survival.jpg"
+ },
+ {
+  "name": "gm_bigcity",
+  "id": "105982362",
+  "title": "gm_bigcity",
+  "type": "",
+  "tags": [],
+  "author": "author",
+  "size": 59632572,
+  "description": "A big open city map. Fully noded for AI",
+  "preview": "wasm-addons/gm_bigcity.jpg"
+ },
+ {
+  "name": "lightsabers",
+  "id": "111412589",
+  "title": "Star Wars Lightsabers",
+  "type": "weapon",
+  "tags": [
+   "fun",
+   "comic"
+  ],
+  "author": "Author Name",
+  "size": 41383216,
+  "description": "Fully working Star Wars Lightsabers with a lot of customization options. DO NOT REUPLOAD OR OTHERWISE REDISTRIBUTE ANY FILES OF THIS ADDON - LUA FILES ARE SENT FROM YOUR SERVER AUTOMATICALLY AND OTHER CONTENT IS AUTOMATICALLY FORCED TO BE D",
+  "preview": "wasm-addons/lightsabers.jpg"
+ },
+ {
+  "name": "m9k_assault_rifles",
+  "id": "128089118",
+  "title": "M9K Assault Rifles",
+  "type": "",
+  "tags": [],
+  "author": "author",
+  "size": 140693441,
+  "description": "FIGHT FOR NET NEURTALITY! This addon was not designed for TTT. DarkRP works with minor changes to settings, such as default clips, weapon stripping. See the description for info on how to adjust these settings to fit your needs. Included in",
+  "preview": "wasm-addons/m9k_assault_rifles.jpg"
+ },
+ {
+  "name": "m9k_heavy_weapons",
+  "id": "128091208",
+  "title": "M9K Heavy Weapons",
+  "type": "",
+  "tags": [],
+  "author": "author",
+  "size": 173933705,
+  "description": "FIGHT FOR NET NEURTALITY! This addon was not designed for TTT. DarkRP works with minor changes to settings, such as default clips, weapon stripping. See the description for info on how to adjust these settings to fit your needs. Included in",
+  "preview": "wasm-addons/m9k_heavy_weapons.jpg"
+ },
+ {
+  "name": "m9k_small_arms",
+  "id": "128093075",
+  "title": "M9K Small Arms pack",
+  "type": "",
+  "tags": [],
+  "author": "author",
+  "size": 168359123,
+  "description": "FIGHT FOR NET NEURTALITY! This addon was not designed for TTT. DarkRP works with minor changes to settings, such as default clips, weapon stripping. See the description for info on how to adjust these settings to fit your needs. Included in",
+  "preview": "wasm-addons/m9k_small_arms.jpg"
+ },
+ {
+  "name": "vj_base",
+  "id": "131759821",
+  "title": "VJ Base",
+  "type": "npc",
+  "tags": [
+   "fun",
+   "roleplay",
+   "realism"
+  ],
+  "author": "Author Name",
+  "size": 82026585,
+  "description": "VJ Base, short for Vrej Base, was established in 2012 with the aim of assisting in the development of Garry's Mod addons. It is best known for its scripted NPC base, featuring highly customizable and sophisticated artificial intelligence sy",
+  "preview": "wasm-addons/vj_base.jpg"
+ },
+ {
+  "name": "stranded",
+  "id": "133364818",
+  "title": "Garry's Mod Stranded",
+  "type": "gamemode",
+  "tags": [
+   "realism",
+   "roleplay"
+  ],
+  "author": "Author Name",
+  "size": 24397058,
+  "description": "Welcome to Garry's Mod Stranded! In this gamemode your sole purpose/aim is to survive. You DO NOT need Counter-Strike: Source for this gamemode unless a map you are playing on needs it. This gamemode has built in prop protection, so don't s",
+  "preview": "wasm-addons/stranded.jpg"
+ },
+ {
+  "name": "prop_hunt",
+  "id": "143190159",
+  "title": "Prop Hunt",
+  "type": "",
+  "tags": [],
+  "author": "author",
+  "size": 25440567,
+  "description": "I won't reply any more comments. If you want help, subscribe this one instead. Sorry :( ==========PROP HUNT=========== Where did you find this? - Here. Who made this? - I don't know Who fixed this? - This guy Who added icons and settings - ",
+  "preview": "wasm-addons/prop_hunt.jpg"
+ },
+ {
+  "name": "m9k_specialties",
+  "id": "144982052",
+  "title": "M9K Specialties",
+  "type": "",
+  "tags": [],
+  "author": "author",
+  "size": 118698031,
+  "description": "FIGHT FOR NET NEURTALITY! This addon was not designed for TTT. DarkRP works with minor changes to settings, such as default clips, weapon stripping. See the description for info on how to adjust these settings to fit your needs. Included in",
+  "preview": "wasm-addons/m9k_specialties.jpg"
+ },
+ {
+  "name": "wiremod",
+  "id": "160250458",
+  "title": "Wiremod",
+  "type": "",
+  "tags": [],
+  "author": "No author provided",
+  "size": 20537537,
+  "description": "A collection of entities connectable by data wires, which allows for the creation of advanced contraptions. This is the STABLE edition of wiremod, where updates progress much slower. If you need bleeding edge, use Wiremod Canary. Wiremod La",
+  "preview": "wasm-addons/wiremod.jpg"
+ },
+ {
+  "name": "gms_sand_islands",
+  "id": "169802523",
+  "title": "gms_sand_islands - Made for Garry's Mod Stranded",
+  "type": "",
+  "tags": [],
+  "author": "author",
+  "size": 38580052,
+  "description": "Sand Islands Made for the Garry's Mod Stranded Gamemode (unofficial map) gms_sand_islands is a pretty large map that I made for the gamemode Garry's Mod Stranded. This map includes two buildings that is sealed off with wooden beams to make ",
+  "preview": "wasm-addons/gms_sand_islands.jpg"
+ },
+ {
+  "name": "murder",
+  "id": "187073946",
+  "title": "Murder",
+  "type": "gamemode",
+  "tags": [
+   "fun"
+  ],
+  "author": "Author Name",
+  "size": 574921,
+  "description": "A gamemode of deception and murder, based off of Murder in the Dark. One person is a murderer with a knife, who is trying to secretly kill off the other players. The other players must use their wits to find out who it is and kill them firs",
+  "preview": "wasm-addons/murder.jpg"
+ },
+ {
+  "name": "improved_stacker",
+  "id": "264467687",
+  "title": "Improved Stacker",
+  "type": "tool",
+  "tags": [
+   "build",
+   "fun"
+  ],
+  "author": "Author Name",
+  "size": 197226,
+  "description": "Improved Stacker Tool The Improved Stacker tool is a complete rewrite of the original Stacker tool and includes many bug fixes and new features that both clients and server owners can benefit from. Unlike the other versions of the tool, the",
+  "preview": "wasm-addons/improved_stacker.jpg"
+ },
+ {
+  "name": "hide_and_seek",
+  "id": "266512527",
+  "title": "Hide and Seek",
+  "type": "",
+  "tags": [],
+  "author": "author",
+  "size": 6665615,
+  "description": "{ Hide and Seek } - { Version 1.2b } This version is a less-stupid one. It does not contain; stock rtv, dynamic tag-ranges, anti-cheat. It still includes achievements and required fixes. --------------------------------------- The classic g",
+  "preview": "wasm-addons/hide_and_seek.png"
+ },
+ {
+  "name": "gm_fork",
+  "id": "326332456",
+  "title": "gm_fork",
+  "type": "map",
+  "tags": [
+   "scenic",
+   "realism"
+  ],
+  "author": "Author Name",
+  "size": 199276889,
+  "description": "A quiet town lies near a mountainous forest littered with landmarks from a bygone era. No other games or addons are required! Features: - A large terrain (maximum map size) with a river, steep hills and dense forests - A town and various ot",
+  "preview": "wasm-addons/gm_fork.jpg"
+ },
+ {
+  "name": "precision_alignment",
+  "id": "457478322",
+  "title": "Precision Alignment",
+  "type": "tool",
+  "tags": [
+   "build",
+   "realism"
+  ],
+  "author": "Author Name",
+  "size": 299112,
+  "description": "This is a reupload of the original precision alignment tool I don't work on this and this is now an unmaintained tool",
+  "preview": "wasm-addons/precision_alignment.jpg"
+ },
+ {
+  "name": "zombie_invasion",
+  "id": "597017711",
+  "title": "Zombie/NPC Invasion (Fixed)",
+  "type": "tool",
+  "tags": [
+   "fun",
+   "roleplay"
+  ],
+  "author": "Author Name",
+  "size": 56375,
+  "description": "IF YOU ENCOUNTER ANY ISSUES READ THIS ENTIRE DESCRIPTION BEFORE ASKING FOR HELP This is a fixed and improved version of JASON's great addon, Zombie/NPC Invasion. The original addon IS NOT required! Please uninstall it to prevent any conflic",
+  "preview": "wasm-addons/zombie_invasion.jpg"
+ },
+ {
+  "name": "simfphys_base",
+  "id": "771487490",
+  "title": "simfphys LUA Vehicles - Base",
+  "type": "vehicle",
+  "tags": [
+   "fun",
+   "build"
+  ],
+  "author": "Author Name",
+  "size": 139079094,
+  "description": "simfphys is a vehicle entity script that is primarily aimed for four-wheeled-ground-vehicles. These vehicles can be edited ingame, thats cool i guess, but don't put all sliders on max and expect good handling lmao. https://i.imgur.com/rTv7Q",
+  "preview": "wasm-addons/simfphys_base.jpg"
+ },
+ {
+  "name": "advdupe2",
+  "id": "773402917",
+  "title": "Advanced Duplicator 2",
+  "type": "",
+  "tags": [],
+  "author": "No author provided",
+  "size": 241420,
+  "description": "Ground up rewrite meant to make up for some of the shortcomings of the first iteration of AdvDupe. NOTICE: AdvDupe1 (the first advanced duplicator, has been REMOVED from the workshop by the Wire Team. Please use this addon, AdvDupe2, for al",
+  "preview": "wasm-addons/advdupe2.jpg"
+ },
+ {
+  "name": "drgbase",
+  "id": "1560118657",
+  "title": "DrGBase | Nextbot Base",
+  "type": "npc",
+  "tags": [
+   "fun",
+   "roleplay"
+  ],
+  "author": "Author Name",
+  "size": 606600,
+  "description": "https://i.imgur.com/EFERX9f.gif DrGBase is built on top of the default nextbot base to add stuff that you usually have to code yourself when creating a nextbot, such as AI behaviour or a relationship system. It also comes with a built-in po",
+  "preview": "wasm-addons/drgbase.jpg"
+ },
+ {
+  "name": "vj_zombies",
+  "id": "1947641829",
+  "title": "Q-RP | Zombie'S",
+  "type": "servercontent",
+  "tags": [
+   "fun",
+   "roleplay"
+  ],
+  "author": "Author Name",
+  "size": 113620225,
+  "description": "Аддон создан специально для сервера Zombie-RP | Конец Эпохи. IP: Не существует. Копирование строго запрещено. Использование на своем сервере разрешено.",
+  "preview": "wasm-addons/vj_zombies.jpg"
+ },
+ {
+  "name": "tfa_base",
+  "id": "2840031720",
+  "title": "TFA Base",
+  "type": "weapon",
+  "tags": [
+   "fun",
+   "realism"
+  ],
+  "author": "Author Name",
+  "size": 43379120,
+  "description": "Frequently Asked Questions Documentation for Developers Community Translations (and how to make one yourself) (all links dubbed in changelog tab above) For users: -A rich, thoroughly tested feature set including: Holographic HUD, reminiscen",
+  "preview": "wasm-addons/tfa_base.jpg"
+ },
+ {
+  "name": "drg_bon_rabbit",
+  "id": "3541699236",
+  "title": "[DrGBase] [Gentoi] Bon The Rabbit NEXTBOT",
+  "type": "npc",
+  "tags": [
+   "movie",
+   "realism",
+   "cartoon"
+  ],
+  "author": "Author Name",
+  "size": 218744,
+  "description": "!!!ATTENTION!!! IF YOU HAVE A PROBLEM WITH WITH A FLOATING OR JUST WALKING ERROR, DON'T RUSH TO DISLIKE THE ADDON! YOU MUST DOWNLOAD THIS ADDON AND RESTART THE GAME NECESSARY (THIS ALSO APPLIES TO IF THE NEXTBOT IS NOT DISPLAYED IN THE DRGB",
+  "preview": "wasm-addons/drg_bon_rabbit.jpg"
+ }
+]

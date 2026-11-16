@@ -238,7 +238,7 @@ export function installWinsock(SHIMS) {
   });
   // hostent for the machine itself, localhost and dotted addresses; any other name does not resolve.
   WS('gethostbyname', 1, function (namePtr) {
-    const g = this.g, st = net(g), name = g.readStr(namePtr).toLowerCase().replace(/^"(.*)"$/, '$1');
+    const g = this.g, st = net(g), name = g.readStr(namePtr).toLowerCase().replace(/"/g, '');
     let ip = null;
     if (name === 'gamebox' || name === '') ip = st.myIp; else if (name === 'localhost') ip = LOOPBACK;
     else { const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(name); if (m) ip = (((+m[1] << 24) | (+m[2] << 16) | (+m[3] << 8) | +m[4]) >>> 0); }
@@ -258,8 +258,9 @@ export function installWinsock(SHIMS) {
   // getaddrinfo: the engine resolves every address with it (connect 10.77.0.1 included). Same names as gethostbyname; the result
   // is one ADDRINFOA (32 bytes on x86) followed by its sockaddr_in, in one heap block that freeaddrinfo releases.
   WS('getaddrinfo', 4, function (nodePtr, servicePtr, hints, out) {
-    // The engine passes connect's argument as typed; RunConsoleCommand("connect", ip) arrives quoted, so quotes are dropped.
-    const g = this.g, st = net(g), name = nodePtr ? g.readStr(nodePtr).toLowerCase().replace(/^"(.*)"$/, '$1') : null;
+    // The engine passes connect's argument as typed; RunConsoleCommand("connect", ip) arrives quoted, and with the port split off
+    // only the opening quote is left ("1.2.3.4), so every quote is dropped.
+    const g = this.g, st = net(g), name = nodePtr ? g.readStr(nodePtr).toLowerCase().replace(/"/g, '') : null;
     if (st.dbg) g.log?.(`[net] getaddrinfo(${name}, ${servicePtr ? g.readStr(servicePtr) : null}, hints ${hints ? [0, 4, 8, 12].map((o) => g.dv.getInt32(hints + o, true)).join('/') : '-'})`);
     const flags = hints ? g.dv.getInt32(hints, true) : 0;
     let ip = null;

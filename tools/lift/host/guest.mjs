@@ -1832,7 +1832,11 @@ K('GetCurrentDirectoryW', function (n, buf) {
 K('SetCurrentDirectoryW', function (p) { return setCwd(this.g, wstr(this.g, p)); });
 function fullPath(name) {
   let s = name.replace(/\//g, '\\');
-  if (!/^[a-z]:/i.test(s)) s = VIRTUAL_CWD + '\\' + s;
+  // "C:garrysmod" is relative to the current directory on drive C (as on Windows), not a drive named "C:garrysmod".
+  // Getting this wrong made the engine's game directory "C:garrysmod", which real servers reject (COM_CheckGameDirectory).
+  const rel = /^([a-z]):(?!\\)(.*)$/is.exec(s);
+  if (rel) s = rel[1].toLowerCase() === 'c' ? VIRTUAL_CWD + '\\' + rel[2] : rel[1] + ':\\' + rel[2];
+  else if (!/^[a-z]:/i.test(s)) s = VIRTUAL_CWD + '\\' + s;
   const [drive, ...parts] = s.split('\\');
   const out = [];
   for (const part of parts) {

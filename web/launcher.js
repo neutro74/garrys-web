@@ -256,61 +256,145 @@ function profilePanel(el, hub, onAccount = () => {}) {
   if (box) accountBox(box, () => { onAccount(); profilePanel(el, hub, onAccount); el.querySelector('[data-close]')?.addEventListener('click', (ev) => { ev.preventDefault(); onAccount('close'); }); });
   if (!account()) setTimeout(() => input.focus(), 50);
 }
+// Chat: the public rooms (kept on the hub, older messages load when scrolling up) and Private: one-to-one messages between
+// Garry's Web accounts. Clicking a signed-in player's name in a room opens a private chat with them.
 function chatPanel(el, hub) {
   el.innerHTML = `<div class="panel-head"><img src="${game('html/img/news.png')}" alt=""><span>Chat</span><small data-state></small><a href="#" class="x" data-close title="Close">✕</a></div>
-    <div class="tabs" role="tablist">${ROOMS.map(([id, label]) => `<button role="tab" data-room="${id}">${label}<small data-count></small></button>`).join('')}</div>
+    <div class="tabs" role="tablist">${ROOMS.map(([id, label]) => `<button role="tab" data-room="${id}">${label}<small data-count></small></button>`).join('')}<button role="tab" data-room="@private">Private</button></div>
+    <div class="dmhead" data-dmhead hidden></div>
     <div class="log" data-log aria-live="polite"></div>
     <form class="say" data-say autocomplete="off">
       <input data-name maxlength="24" aria-label="Your name" title="Your name (click to change)">
+      <input data-to maxlength="20" placeholder="Username" aria-label="Send to" hidden spellcheck="false">
       <input data-text maxlength="400" placeholder="Say something…" aria-label="Message">
       <button class="btn-primary">Send</button></form>`;
-  const $ = (q) => el.querySelector(q), log = $('[data-log]'), text = $('[data-text]'), nameIn = $('[data-name]'), stateEl = $('[data-state]');
-  const logs = new Map(ROOMS.map(([id]) => [id, []])), users = new Map();
-  let room = store.get('chat-room', 'general'); if (!logs.has(room)) room = 'general';
+  const $ = (q) => el.querySelector(q), log = $('[data-log]'), text = $('[data-text]'), nameIn = $('[data-name]'), toIn = $('[data-to]'), stateEl = $('[data-state]'), dmHead = $('[data-dmhead]');
+  const logs = new Map(ROOMS.map(([id]) => [id, []])), done = new Map(), users = new Map();
+  const dmLogs = new Map(), dmDone = new Map(), unreadDm = new Set();
+  let convos = [], peer = null, loadingOlder = false;
+  let room = store.get('chat-room', 'general'); if (!logs.has(room) && room !== '@private') room = 'general';
+  const priv = () => room === '@private';
   const line = (m) => {
     const d = document.createElement('div');
     if (m.sys) { d.className = 'sys'; d.textContent = m.sys; return d; }
     const t = document.createElement('time'), n = document.createElement('b'), s = document.createElement('span');
-    t.textContent = clock(m.at); n.textContent = m.from.name; n.style.color = nameColor(m.from.name); s.textContent = m.text;
-    if (hub.me && m.from.id === hub.me.id) d.className = 'mine';
+    const name = m.t === 'dm' ? (m.from === hub.account ? 'You' : m.from) : m.from.name;
+    t.textContent = clock(m.at); n.textContent = name; n.style.color = nameColor(name); s.textContent = m.text;
+    if (m.t !== 'dm' && m.from.account && m.from.account !== hub.account) { n.classList.add('who'); n.title = `Private chat with ${m.from.account}`; n.onclick = () => openDm(m.from.account); }
+    if (m.t === 'dm' ? m.from === hub.account : hub.me && m.from.id === hub.me.id) d.className = 'mine';
     d.append(t, n, s); return d;
   };
+  const atBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < 40;
   const add = (r, m) => {
     const list = logs.get(r); if (!list) return;
-    list.push(m); if (list.length > 200) list.shift();
-    if (r === room) { const near = log.scrollHeight - log.scrollTop - log.clientHeight < 40; log.append(line(m)); while (log.childElementCount > 200) log.firstElementChild.remove(); if (near) log.scrollTop = log.scrollHeight; }
+    if (!list.length && r === room) log.replaceChildren();   // the room's empty-room note goes once something is said
+    list.push(m);
+    if (r === room) { const near = atBottom(); log.append(line(m)); if (near) log.scrollTop = log.scrollHeight; }
     else el.querySelector(`[data-room="${r}"]`)?.classList.add('unread');
   };
-  const show = () => {
-    for (const b of el.querySelectorAll('[data-room]')) { const on = b.dataset.room === room; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); if (on) b.classList.remove('unread'); b.querySelector('[data-count]').textContent = users.has(b.dataset.room) ? ` ${users.get(b.dataset.room).size}` : ''; }
-    const list = logs.get(room);
-    log.replaceChildren(...(list.length ? list : [{ sys: `This is #${ROOMS.find(([id]) => id === room)[1]}. Messages are public and not kept after the hub restarts; be nice.` }]).map(line)); log.scrollTop = log.scrollHeight;
-    log.title = users.has(room) ? `Here: ${[...users.get(room).values()].join(', ')}` : '';
+  const tabs = () => {
+    for (const b of el.querySelectorAll('[data-room]')) {
+      const on = b.dataset.room === room; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); if (on && !priv()) b.classList.remove('unread');
+      const c = b.querySelector('[data-count]'); if (c) c.textContent = users.has(b.dataset.room) ? ` ${users.get(b.dataset.room).size}` : '';
+    }
+    el.querySelector('[data-room="@private"]').classList.toggle('unread', unreadDm.size > 0);
   };
+  const show = () => {
+    tabs();
+    nameIn.hidden = priv(); toIn.hidden = !(priv() && !peer && hub.account);
+    if (!priv()) {
+      dmHead.hidden = true;
+      const list = logs.get(room);
+      log.replaceChildren(...(list.length ? list : [{ sys: `This is #${ROOMS.find(([id]) => id === room)[1]}. Messages are public and kept; be nice.` }]).map(line)); log.scrollTop = log.scrollHeight;
+      log.title = users.has(room) ? `Here: ${[...users.get(room).values()].join(', ')}` : '';
+    } else if (!hub.account) {
+      dmHead.hidden = true;
+      log.replaceChildren(line({ sys: 'Private chats are between Garry\'s Web accounts. Sign in or create one in Profile, then come back here.' }));
+    } else if (!peer) {
+      dmHead.hidden = true; log.title = '';
+      log.replaceChildren(...(convos.length ? [] : [line({ sys: 'No private chats yet. Type a username below to start one, or click a name in a room.' })]));
+      for (const c of convos) {
+        const row = document.createElement('div'); row.className = 'convo' + (unreadDm.has(c.with) ? ' unread' : '');
+        const n = document.createElement('b'), s = document.createElement('span'), t = document.createElement('time');
+        n.textContent = c.with; n.style.color = nameColor(c.with); s.textContent = (c.last.from === hub.account ? 'You: ' : '') + c.last.text; t.textContent = clock(c.last.at);
+        if (c.online) n.title = 'Online';
+        row.append(n, s, t); row.onclick = () => openDm(c.with); log.append(row);
+      }
+    } else {
+      dmHead.hidden = false;
+      dmHead.innerHTML = `<a href="#" data-back>‹ Private chats</a> <b></b>`; dmHead.querySelector('b').textContent = peer;
+      dmHead.querySelector('[data-back]').onclick = (ev) => { ev.preventDefault(); peer = null; hub.dms(); show(); };
+      const list = dmLogs.get(peer) ?? [];
+      log.replaceChildren(...(list.length ? list : [{ sys: dmLogs.has(peer) ? `Start your private chat with ${peer}. Only the two of you can read it.` : 'Loading…' }]).map(line)); log.scrollTop = log.scrollHeight;
+    }
+    state(hub.state);
+  };
+  function openDm(who) {
+    room = '@private'; peer = who; unreadDm.delete(who); store.set('chat-room', room);
+    if (!dmLogs.has(who)) hub.dmHistory(who);
+    show(); text.focus();
+  }
   const state = (s) => {
     stateEl.textContent = { connecting: 'connecting…', online: hub.online ? `${hub.online} online` : 'online', offline: 'offline, retrying…', off: '' }[s] ?? '';
-    text.disabled = s !== 'online'; text.placeholder = s === 'online' ? `Message #${ROOMS.find(([id]) => id === room)[1]}` : s === 'off' ? 'Chat is not set up for this copy of the game.' : 'Connecting to chat…';
+    const ok = s === 'online' && (!priv() || !!hub.account);
+    text.disabled = !ok;
+    text.placeholder = s === 'off' ? 'Chat is not set up for this copy of the game.' : s !== 'online' ? 'Connecting to chat…'
+      : priv() ? (!hub.account ? 'Sign in (Profile) for private chats' : peer ? `Message ${peer}` : 'Message') : `Message #${ROOMS.find(([id]) => id === room)[1]}`;
+  };
+  // Scrolling to the top loads older messages (rooms and private chats are both kept on the hub).
+  log.addEventListener('scroll', () => {
+    if (log.scrollTop > 20 || loadingOlder) return;
+    if (!priv()) { const list = logs.get(room); if (!list?.length || done.get(room)) return; loadingOlder = true; hub.roomHistory(room, list[0].at); }
+    else if (peer) { const list = dmLogs.get(peer); if (!list?.length || dmDone.get(peer)) return; loadingOlder = true; hub.dmHistory(peer, list[0].at); }
+  });
+  const prepend = (list, older) => {
+    const h = log.scrollHeight; list.unshift(...older); show(); log.scrollTop = log.scrollHeight - h;
   };
   const offs = [
     hub.on('state', state),
     hub.on('welcome', (m) => { nameIn.value = m.name; state('online'); }),
-    hub.on('room', (m) => { users.set(m.room, new Map(m.users.map((u) => [u.id, u.name]))); logs.set(m.room, m.history.slice()); if (m.room === room) show(); else show(); }),
-    hub.on('joined', (m) => { users.get(m.room)?.set(m.user.id, m.user.name); show(); }),
-    hub.on('left', (m) => { users.get(m.room)?.delete(m.user.id); show(); }),
-    hub.on('nick', (m) => { users.get(m.room)?.set(m.user.id, m.user.name); add(m.room, { sys: `${m.old} is now ${m.user.name}` }); }),
+    hub.on('authed', () => { if (hub.account) hub.dms(); show(); }),
+    hub.on('room', (m) => { users.set(m.room, new Map(m.users.map((u) => [u.id, u.name]))); logs.set(m.room, m.history.slice()); done.set(m.room, m.history.length < 100); if (m.room === room) show(); else tabs(); }),
+    hub.on('room-history', (m) => { loadingOlder = false; done.set(m.room, m.done); if (m.messages.length && logs.has(m.room)) { if (m.room === room) prepend(logs.get(m.room), m.messages); else logs.get(m.room).unshift(...m.messages); } }),
+    hub.on('joined', (m) => { users.get(m.room)?.set(m.user.id, m.user.name); tabs(); }),
+    hub.on('left', (m) => { users.get(m.room)?.delete(m.user.id); tabs(); }),
+    hub.on('nick', (m) => { users.get(m.room)?.set(m.user.id, m.user.name); if (m.old !== m.user.name) add(m.room, { sys: `${m.old} is now ${m.user.name}` }); }),
     hub.on('msg', (m) => add(m.room, m)),
-    hub.on('error', (m) => add(room, { sys: m.error })),
+    hub.on('dms', (m) => { convos = m.list; for (const c of convos) if (c.last.from !== hub.account && c.last.at > +store.get(`dm-seen-${c.with}`, '0')) unreadDm.add(c.with); if (priv() && !peer) show(); else tabs(); }),
+    hub.on('dm-history', (m) => {
+      loadingOlder = false; dmDone.set(m.with, m.done);
+      if (dmLogs.has(m.with) && m.messages.length && dmLogs.get(m.with).length) { if (peer === m.with) prepend(dmLogs.get(m.with), m.messages); else dmLogs.get(m.with).unshift(...m.messages); }
+      else { dmLogs.set(m.with, m.messages.slice()); if (peer === m.with) show(); }
+      const last = m.messages.at(-1); if (last && peer === m.with) store.set(`dm-seen-${m.with}`, String(last.at));
+    }),
+    hub.on('dm', (m) => {
+      const other = m.from === hub.account ? m.to : m.from;
+      if (dmLogs.has(other)) dmLogs.get(other).push(m);
+      const c = convos.find((x) => x.with === other); if (c) c.last = m; else convos.unshift({ with: other, last: m });
+      convos.sort((a, b) => b.last.at - a.last.at);
+      if (priv() && peer === other) { const near = atBottom(); log.querySelector('.sys')?.remove(); log.append(line(m)); if (near) log.scrollTop = log.scrollHeight; store.set(`dm-seen-${other}`, String(m.at)); }
+      else { if (m.from !== hub.account) unreadDm.add(other); if (priv() && !peer) show(); else tabs(); }
+    }),
+    hub.on('error', (m) => { loadingOlder = false; if (!priv()) add(room, { sys: m.error }); else { log.append(line({ sys: m.error })); log.scrollTop = log.scrollHeight; } }),
   ];
-  for (const b of el.querySelectorAll('[data-room]')) b.addEventListener('click', () => { room = b.dataset.room; store.set('chat-room', room); show(); state(hub.state); text.focus(); });
+  for (const b of el.querySelectorAll('[data-room]')) b.addEventListener('click', () => {
+    room = b.dataset.room; store.set('chat-room', room);
+    if (priv()) { peer = null; hub.dms(); }
+    show(); text.focus();
+  });
   $('[data-say]').addEventListener('submit', (ev) => {
     ev.preventDefault();
     const t = text.value.trim(); if (!t) return;
-    if (hub.say(room, t)) text.value = '';
+    if (!priv()) { if (hub.say(room, t)) text.value = ''; return; }
+    const to = peer ?? toIn.value.trim().toLowerCase();
+    if (!to) { toIn.focus(); return; }
+    if (hub.dm(to, t)) { text.value = ''; if (!peer) openDm(to); }
   });
   nameIn.value = hub.name;
   nameIn.addEventListener('change', () => { const n = nameIn.value.trim(); if (n.length >= 2) hub.rename(n); else nameIn.value = hub.name; });
   for (const [id] of ROOMS) hub.join(id);
-  hub.connect(); state(hub.state); show();
+  hub.connect(); if (hub.state === 'online') { hub.auth(); }
+  show();
   setTimeout(() => text.focus(), 50);
   return () => { for (const off of offs) off(); };
 }

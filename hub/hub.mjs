@@ -13,11 +13,13 @@ import { createVersions } from './versions.mjs';
 import { createAccounts } from './accounts.mjs';
 import { createServers } from './servers.mjs';
 import { createSteamLogin } from './steam-login.mjs';
+import { createChatStore } from './chat-store.mjs';
 
 const PORT = +(process.env.PORT ?? 8787), HOST = process.env.HOST ?? '0.0.0.0';
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
 const ORIGINS = (process.env.ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 const ROOMS = ['general', 'help', 'looking-for-game', 'off-topic'];
+const LIMITED = new Set(['say', 'dm', 'nick', 'hello', 'host', 'room-history', 'dm-history']);
 const LIMITS = { clients: 500, perIp: 6, frame: 64 * 1024, text: 400, name: 24, history: 60, lobbies: 100, burst: 6, refillMs: 1500 };
 
 // ---- WebSocket framing ------------------------------------------------------------------------------------------
@@ -85,7 +87,9 @@ class Conn {
     let m;
     try { m = JSON.parse(text); } catch { return this.send({ t: 'error', error: 'Bad message' }); }
     if (!m || typeof m.t !== 'string') return;
-    if (m.t !== 'signal' && !this.allow()) return this.send({ t: 'error', error: 'Slow down a little.' });
+    // The spam limit is for what people type (and history reads, which touch the disk); joining rooms, signing in and other
+    // setup a page sends on connecting are not counted.
+    if (LIMITED.has(m.t) && !this.allow()) return this.send({ t: 'error', error: 'Slow down a little.' });
     try { handle(this, m); } catch (e) { this.send({ t: 'error', error: String(e.message ?? e) }); }
   }
   gone() {
@@ -124,7 +128,9 @@ function pairUp(c, token) {
   else setTimeout(() => { if (pairs.get(token)?.length === 1) c.close(1000); }, 60e3);
 }
 const byId = (id) => { for (const c of clients) if (c.id === id) return c; return null; };
-const user = (c) => ({ id: c.id, name: c.name });
+const user = (c) => ({ id: c.id, name: c.name, ...(c.account ? { account: c.account } : {}) });
+const chat = createChatStore();
+const keep = (fn) => { try { fn(); } catch (e) { console.log(`chat: not saved: ${e.message}`); } };
 const clean = (s, max) => String(s ?? '').replace(/[\u0000-\u001f\u007f​-‏‪-‮]/g, '').trim().slice(0, max);
 
 function roomList() { return ROOMS.map((name) => ({ name, users: rooms.get(name).members.size })); }
@@ -155,7 +161,9 @@ function handle(c, m) {
       const r = rooms.get(m.room);
       if (!r) throw Error('No such room.');
       if (!r.members.has(c)) { r.members.add(c); c.rooms.add(m.room); toRoom(m.room, { t: 'joined', room: m.room, user: user(c) }, c); }
-      return c.send({ t: 'room', room: m.room, users: [...r.members].map(user), history: r.history });
+      let history = r.history;
+      try { history = chat.room(m.room, 100).messages; } catch { /* the in-memory copy */ }
+      return c.send({ t: 'room', room: m.room, users: [...r.members].map(user), history });
     }
     case 'leave': return leaveRoom(c, m.room);
     case 'say': {
@@ -164,6 +172,7 @@ function handle(c, m) {
       if (!text) return;
       const msg = { t: 'msg', room: m.room, from: user(c), text, at: Date.now() };
       r.history.push(msg); if (r.history.length > LIMITS.history) r.history.shift();
+      keep(() => chat.saveRoom(m.room, msg));
       return toRoom(m.room, msg);
     }
     case 'nick': {
@@ -174,6 +183,38 @@ function handle(c, m) {
       return c.send({ t: 'welcome', id: c.id, name, rooms: roomList(), online: clients.size });
     }
     // Lobbies: a host advertises a game; joiners ask to join and the two clients exchange pairing codes via 'signal'.
+    // Older messages of a room, before a time (the client scrolls back).
+    case 'room-history': {
+      if (!rooms.has(m.room)) throw Error('No such room.');
+      return c.send({ t: 'room-history', room: m.room, ...chat.room(m.room, 100, +m.before || Infinity) });
+    }
+    // Private messages: between Garry's Web accounts (a name alone is not unique). The socket signs in with the account's
+    // session token; messages are kept, and delivered to every connection of both players.
+    case 'auth': {
+      const u = accounts.verify(m.user, m.token);
+      c.account = u ?? null;
+      return c.send({ t: 'authed', user: u ?? null });
+    }
+    case 'dm': {
+      if (!c.account) throw Error('Sign in to a Garry\'s Web account (Profile) to send private messages.');
+      const to = String(m.to ?? '').toLowerCase(), text = clean(m.text, LIMITS.text);
+      if (to === c.account) throw Error('That is you.');
+      if (!accounts.exists(to)) throw Error(`There is no account called ${to}.`);
+      if (!text) return;
+      const msg = { t: 'dm', from: c.account, name: c.name, to, text, at: Date.now() };
+      chat.saveDm(c.account, to, msg);
+      for (const x of clients) if (x.account === to || x.account === c.account) x.send(msg);
+      return;
+    }
+    case 'dms': {
+      if (!c.account) return c.send({ t: 'dms', list: [] });
+      return c.send({ t: 'dms', list: chat.conversations(c.account).map((x) => ({ ...x, online: [...clients].some((y) => y.account === x.with) })) });
+    }
+    case 'dm-history': {
+      if (!c.account) throw Error('Sign in first.');
+      const other = String(m.with ?? '').toLowerCase();
+      return c.send({ t: 'dm-history', with: other, ...chat.dm(c.account, other, 100, +m.before || Infinity) });
+    }
     case 'watch-lobbies': c.watching = m.on !== false; return c.send({ t: 'lobbies', lobbies: lobbyList(c) });
     case 'host': {
       const i = m.lobby ?? {};

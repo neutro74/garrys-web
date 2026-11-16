@@ -54,14 +54,26 @@ export class Hub extends EventTarget {
       this.online = m.online; this.roomList = m.rooms;
       if (first) {
         this.setState('online');
+        this.auth();
         for (const r of this.rooms) this.send({ t: 'join', room: r });   // rejoin after a reconnect
         if (this.watch) this.send({ t: 'watch-lobbies' });
         if (this.lobby) this.send({ t: 'host', lobby: this.lobby });
       }
     }
     if (m.t === 'rooms') { this.roomList = m.rooms; this.online = m.online; }
+    if (m.t === 'authed') this.account = m.user;
     this.emit(m.t, m);
   }
+  // Signed in to a Garry's Web account (Profile, web/account.js): the chat socket signs in too, for private messages.
+  auth() {
+    let a = null;
+    try { a = JSON.parse(localStorage.getItem('garrys-wasm.account') ?? 'null'); } catch { /* storage blocked */ }
+    if (a?.user && a?.token) this.send({ t: 'auth', user: a.user, token: a.token }); else this.account = null;
+  }
+  roomHistory(room, before) { return this.send({ t: 'room-history', room, before }); }
+  dm(to, text) { return this.send({ t: 'dm', to, text }); }
+  dms() { return this.send({ t: 'dms' }); }
+  dmHistory(other, before) { return this.send({ t: 'dm-history', with: other, before }); }
   rename(name) { store.set('name', name); if (this.me) this.send({ t: 'nick', name }); }
   join(room) { this.rooms.add(room); this.send({ t: 'join', room }); }
   leave(room) { this.rooms.delete(room); this.send({ t: 'leave', room }); }

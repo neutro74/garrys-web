@@ -214,6 +214,14 @@ body { background: #000; }
 #launcher .panel .log b { margin-right: 6px; }
 #launcher .panel .log .sys { color: #999; font-style: italic; }
 #launcher .panel .log .mine span { color: #000; }
+#launcher .panel .log b.who { cursor: pointer; text-decoration: underline dotted; }
+#launcher .panel .dmhead { flex: none; padding: 6px 10px; border-bottom: 1px solid #ddd; background: #f6f6f6; font-size: 13px; }
+#launcher .panel .dmhead a { color: #08c; text-decoration: none; margin-right: 8px; }
+#launcher .panel .log .convo { display: flex; gap: 8px; align-items: baseline; padding: 6px 4px; border-bottom: 1px solid #eee; cursor: pointer; }
+#launcher .panel .log .convo:hover { background: #f2f7fb; }
+#launcher .panel .log .convo span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #555; }
+#launcher .panel .log .convo.unread b::after { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #08c; margin-left: 5px; vertical-align: middle; }
+#launcher .panel .say [data-to] { width: 120px; flex: none; }
 #launcher .panel .say { flex: none; display: flex; gap: 6px; padding: 8px; border-top: 1px solid #ddd; background: #f6f6f6; }
 #launcher .panel .say input { min-width: 0; padding: 6px 8px; border: 1px solid #abadb3; border-radius: 3px; font: 13px "Helvetica Neue", Helvetica, Arial, sans-serif; color: #333; background: #fff; }
 #launcher .panel .say [data-name] { width: 110px; flex: none; font-weight: bold; }

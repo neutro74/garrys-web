@@ -35,7 +35,7 @@ export function createAccounts({ dir = path.join(process.env.WS_CACHE ?? './ws-c
     for await (const c of req) { s += c; if (s.length > max) throw Object.assign(Error('Too large.'), { status: 413 }); }
     return s ? JSON.parse(s) : {};
   }
-  return async function handle(req, res, { ip, headers = {} }) {
+  const handle = async function handle(req, res, { ip, headers = {} }) {
     const url = new URL(req.url, 'http://x');
     if (!url.pathname.startsWith('/acct/')) return false;
     const h = { ...headers, 'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-User', 'Access-Control-Allow-Methods': 'GET, POST, PUT' };
@@ -80,4 +80,13 @@ export function createAccounts({ dir = path.join(process.env.WS_CACHE ?? './ws-c
     } catch (e) { json(res, e.status ?? 400, { error: String(e.message ?? e) }, h); }
     return true;
   };
+  // For the chat socket (private messages): is this a live session token for that user? Does the user exist?
+  handle.verify = (user, token) => {
+    const u = String(user ?? '').toLowerCase();
+    if (!USER.test(u) || !/^[A-Za-z0-9_-]{20,}$/.test(String(token ?? ''))) return null;
+    const a = read(u), h = sha(String(token));
+    return a?.tokens?.some((t) => t.h === h) ? u : null;
+  };
+  handle.exists = (user) => USER.test(String(user ?? '')) && fs.existsSync(file(String(user)));
+  return handle;
 }

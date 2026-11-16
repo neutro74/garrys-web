@@ -101,7 +101,27 @@ class Conn {
 const clients = new Set();
 const rooms = new Map(ROOMS.map((r) => [r, { members: new Set(), history: [] }]));
 const lobbies = new Map();   // id -> { host: Conn, info }
-const relays = new Set();    // /udp connections (hub/servers.mjs)
+const relays = new Set();    // /udp connections (hub/servers.mjs) and /pair connections
+// Paired relay (/pair?t=token): when two players' browsers cannot reach each other directly (no route through their
+// routers), both connect here with the token the host put in its invite and the hub passes their game traffic between
+// them. Two connections per token; each capped at 1 MB/s; one waiting alone for a partner is dropped after a minute.
+const pairs = new Map();     // token -> [Conn, Conn?]
+function pairUp(c, token) {
+  const list = pairs.get(token) ?? [];
+  if (list.length >= 2) return c.close(1008);
+  list.push(c); pairs.set(token, list);
+  let budget = 1 << 20, last = Date.now();
+  c.onBinary = (b) => {
+    const now = Date.now(); budget = Math.min(1 << 20, budget + (now - last) * 1048.576); last = now;
+    if (budget < b.length) return;
+    budget -= b.length;
+    const other = pairs.get(token)?.find((x) => x !== c);
+    if (other) other.sendBinary(b);
+  };
+  c.onClose = () => { const l = pairs.get(token); if (!l) return; pairs.delete(token); for (const x of l) if (x !== c) x.close(1000); };
+  if (list.length === 2) for (const x of list) x.sendBinary(Buffer.from([0, 0x7b, 0x7d]));   // "{}" text: both ends know the pair is up
+  else setTimeout(() => { if (pairs.get(token)?.length === 1) c.close(1000); }, 60e3);
+}
 const byId = (id) => { for (const c of clients) if (c.id === id) return c; return null; };
 const user = (c) => ({ id: c.id, name: c.name });
 const clean = (s, max) => String(s ?? '').replace(/[\u0000-\u001f\u007f​-‏‪-‮]/g, '').trim().slice(0, max);
@@ -200,9 +220,17 @@ server.on('upgrade', (req, socket) => {
   if (!originOk(req.headers.origin)) return reject(403, 'Forbidden');
   const ip = clientIp(req);
   if (req.url.startsWith('/udp')) {
-    if (relays.size >= 200 || [...relays].filter((c) => c.ip === ip).length >= 2) return reject(429, 'Too Many Connections');
+    if (relays.size >= 200 || [...relays].filter((c) => c.ip === ip && !c.pair).length >= 2) return reject(429, 'Too Many Connections');
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${crypto.createHash('sha1').update(key + GUID).digest('base64')}\r\n\r\n`);
     const c = new Conn(socket, ip); c.relay = true; relays.add(c); servers.relay(c);
+    return;
+  }
+  if (req.url.startsWith('/pair')) {
+    const token = new URL(req.url, 'http://x').searchParams.get('t') ?? '';
+    if (!/^[A-Za-z0-9_-]{22,64}$/.test(token)) return reject(400, 'Bad Request');
+    if (relays.size >= 300 || [...relays].filter((c) => c.ip === ip && c.pair).length >= 10) return reject(429, 'Too Many Connections');
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${crypto.createHash('sha1').update(key + GUID).digest('base64')}\r\n\r\n`);
+    const c = new Conn(socket, ip); c.relay = true; c.pair = true; relays.add(c); pairUp(c, token);
     return;
   }
   if (clients.size >= LIMITS.clients) return reject(503, 'Busy');

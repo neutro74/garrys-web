@@ -49,10 +49,14 @@ if (!inlineRender) {
 }
 // The launcher (web/launcher.js) adds the chosen edition and graphics size; URL parameters still work for tests.
 const params = { ...Object.fromEntries(new URLSearchParams(location.search)), ...(globalThis.__launch ?? {}) };
-// First-run engine size: the window in CSS pixels (even, at most 1920x1080), so 2D is drawn 1:1 instead of stretched.
+// Engine size: the window in device pixels (so a high-density screen is not upscaled and blurred), scaled down to fit
+// within 1920x1080 with the window's shape kept. It follows the window on every start (launch-config.mjs).
 // Multiplayer (server browser, hosting, joining) is on unless ?mp=0.
 params.mp = params.mp === '0' ? '0' : '1';
-params.win = `${Math.min(1920, innerWidth & ~1)}x${Math.min(1080, innerHeight & ~1)}`;
+{
+  const dpr = Math.max(1, devicePixelRatio || 1), w = innerWidth * dpr, h = innerHeight * dpr, k = Math.min(1, 1920 / w, 1080 / h);
+  params.win = `${Math.max(640, Math.round(w * k)) & ~1}x${Math.max(360, Math.round(h * k)) & ~1}`;
+}
 // This browser's player identity: a random Steam account id (kept, so saves and bans stay with the player) and the name
 // chosen in the launcher's chat, used in game (steam.mjs).
 try {

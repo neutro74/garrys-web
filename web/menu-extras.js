@@ -279,10 +279,13 @@ GW.joinReal = GW.joinReal or JoinServer
 function JoinServer(addr)
   addr = tostring(addr) load().hist[addr] = true save() GW.last = addr
   if addr:sub(1, 6) == "10.78." then js("window.__gwJoin && __gwJoin('" .. string.JavascriptSafe(addr) .. "')") return end
-  if GW.joinReal then GW.joinReal(addr) else RunConsoleCommand("connect", addr) end
+  -- Servers outside Garry's Web check each player's Steam login, which this build cannot give them (they answer
+  -- "STEAM validation rejected"), so say so instead of trying.
+  GW.Message("This server is not a Garry's Web game. Servers like it check that every player is signed in to Steam, which Garry's Web cannot do yet, so it would turn you away. Garry's Web games (other players' games started from Start New Game) can be joined.", "Can't join this server")
 end
 function serverlist.IsCurrentServerFavorite() return GW.last ~= nil and load().fav[GW.last] == true end
-function GW.Message(text, title) Derma_Message(text, title or "Multiplayer", "OK") end
+-- Shown by the menu page (a Derma popup would sit behind the server browser's HTML, out of sight).
+function GW.Message(text, title) js("window.__gwMessage && __gwMessage('" .. string.JavascriptSafe(text) .. "', '" .. string.JavascriptSafe(title or "Multiplayer") .. "')") end
 hook.Add("StartGame", "garrysweb", function() timer.Simple(0.5, function() js("window.__gwStarted && __gwStarted('" .. string.JavascriptSafe(engine.ActiveGamemode() or "") .. "', '" .. string.JavascriptSafe(GetConVarString("hostname") or "") .. "', " .. GetConVarNumber("sv_lan") .. ")") end) end)
 timer.Create("garrysweb_ingame", 2, 0, function() js("window.__gwInGame && __gwInGame(" .. tostring(IsInGame()) .. ")") end)
 `;
@@ -300,7 +303,22 @@ async function serverBrowser() {
   const clean = (s) => String(s ?? '').replace(/[\u0000-\u001f\u007f]/g, '');
   const ourVer = () => String(window.GMOD_VERSION_INT ?? '');
   const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : '');
-  const message = (text, title) => run('GW.Message(%s, %s)', clean(text), clean(title ?? 'Multiplayer'));
+  // A message box in the menu page, over the server browser, in the menu's own look.
+  const message = (text, title = 'Multiplayer') => {
+    document.getElementById('gw-message')?.remove();
+    const back = document.createElement('div'); back.id = 'gw-message';
+    back.style.cssText = 'position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center';
+    const box = document.createElement('div');
+    box.style.cssText = 'max-width:440px;margin:16px;background:#fff;color:#333;border-radius:4px;box-shadow:0 4px 18px rgba(0,0,0,.6);font:14px Helvetica,Arial,sans-serif;overflow:hidden';
+    const h = document.createElement('div'); h.textContent = clean(title);
+    h.style.cssText = 'padding:10px 14px;background:#2d8fe0;color:#fff;font-weight:bold;font-size:15px';
+    const t = document.createElement('div'); t.textContent = clean(text); t.style.cssText = 'padding:14px;line-height:1.45';
+    const ok = document.createElement('button'); ok.textContent = 'OK';
+    ok.style.cssText = 'display:block;margin:0 14px 14px auto;padding:6px 22px;border:0;border-radius:3px;background:#2d8fe0;color:#fff;font:bold 14px Helvetica,Arial,sans-serif;cursor:pointer';
+    ok.onclick = () => back.remove();
+    box.append(h, t, ok); back.appendChild(box); document.body.appendChild(back);
+  };
+  window.__gwMessage = message;
 
   // Garry's Web games get stable stand-in addresses for the browser's lists.
   const fake = new Map(), byFake = new Map();
@@ -363,18 +381,34 @@ async function serverBrowser() {
     if (!byFake.has(address)) list = await host('server-players', { addr: address }).catch(() => []);
     run('GW.Players(%s, %s)', id, JSON.stringify(list.map((p) => ({ name: clean(p.name), score: p.score | 0, time: +p.time || 0 }))));
   };
+  // A small notice over the server browser while a join links up; GMod's own loading screen takes over once connected.
+  const notice = (text) => {
+    let el = document.getElementById('gw-joining');
+    if (!text) { el?.remove(); return; }
+    if (!el) {
+      el = document.createElement('div'); el.id = 'gw-joining';
+      el.style.cssText = 'position:fixed;left:50%;bottom:72px;transform:translateX(-50%);z-index:10000;padding:10px 18px;border-radius:4px;background:rgba(0,0,0,.82);color:#fff;font:14px Helvetica,Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.5);pointer-events:none';
+      document.body.appendChild(el);
+    }
+    el.textContent = text;
+  };
   window.__gwJoin = async (address) => {
-    const id = byFake.get(address);
+    const id = byFake.get(address), started = Date.now();
+    if (!id) { message('That game is no longer listed. Refresh the list and try again.', "Couldn't join"); return; }
+    const name = (await lobbies().catch(() => [])).find((l) => l.id === id)?.name ?? 'the game';
+    notice(`Joining ${clean(name)}...`);
+    const fail = (text) => { notice(''); message(text, "Couldn't join"); };
     try {
       await host('lobby-join', { id });
-      for (let i = 0; i < 40; i++) {
+      for (let i = 0; i < 60; i++) {
         await new Promise((r) => setTimeout(r, 500));
-        if (await host('lobby-linked').catch(() => false)) { run('RunConsoleCommand("connect", "10.77.0.1")'); return; }
+        if (await host('lobby-linked').catch(() => false)) { notice('Connected. Loading the game...'); setTimeout(() => notice(''), 4000); run('RunConsoleCommand("connect", "10.77.0.1")'); return; }
         const st = await host('lobby-status').catch(() => null);
-        if (st && !st.joining) { message(st.note || 'The host did not answer.', "Couldn't join"); return; }
+        if (st && !st.joining) { fail(st.note || 'The host did not answer.'); return; }
+        if (Date.now() - started > 7000) notice(`Joining ${clean(name)}... (no direct route, going through the Garry's Web server)`);
       }
-      message('The connection to the host did not come up. The host may be behind a network that blocks it.', "Couldn't join");
-    } catch (e) { message(e.message, "Couldn't join"); }
+      fail('The connection to the host did not come up. Check that the host is still in the game, then try again.');
+    } catch (e) { fail(e.message); }
   };
   // Start New Game with more than one player slot lists the game; "Local Server" keeps it to the same network.
   let listed = false, starting = 0;

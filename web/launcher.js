@@ -429,7 +429,7 @@ function menu(ext, backdrop, opts = {}) {
   return new Promise((resolve) => {
     const ids = ext ? ['base', 'extended'] : ['base'];
     let edition = ids.includes(store.get('edition')) ? store.get('edition') : 'base';
-    let quality = store.get('quality', (navigator.hardwareConcurrency ?? 8) <= 4 ? 'perf' : 'std');
+    let quality = store.get('quality', (navigator.hardwareConcurrency ?? 8) <= 4 ? 'perf' : 'sharp');
     if (!QUALITY[quality]) quality = 'std';
     const warn = problems(), single = ids.length === 1, hub = new Hub();
     // Garry's Web is a fan project: say so, and whose the game is.

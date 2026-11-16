@@ -28,6 +28,36 @@ const gathered = (pc, ms = 4000) => new Promise((resolve) => {
   pc.addEventListener('icegatheringstatechange', check); setTimeout(done, ms);
 });
 
+// Stand-in for an RTCDataChannel through the hub (/pair in hub/hub.mjs), for players whose browsers cannot reach each other
+// directly (two players behind one router that does not loop traffic back, blocked local discovery, strict NATs). Same
+// surface as the data channel: readyState, send, close, onopen, onmessage, onclose. Frames carry one leading byte, 0 for
+// text and 1 for binary; the hub sends the text "{}" once both ends are connected.
+const RELAY_AFTER_MS = 5000;
+class HubChannel {
+  constructor(url, token) {
+    this.readyState = 'connecting'; this.relayed = true;
+    const ws = this.ws = new WebSocket(url.replace(/\/?$/, '/pair') + '?t=' + encodeURIComponent(token));
+    ws.binaryType = 'arraybuffer';
+    ws.onmessage = (e) => {
+      const b = new Uint8Array(e.data);
+      if (!b.length) return;
+      if (b[0] === 0) {
+        const text = new TextDecoder().decode(b.subarray(1));
+        if (text === '{}') { if (this.readyState === 'connecting') { this.readyState = 'open'; this.onopen?.(); } return; }
+        this.onmessage?.({ data: text });
+      } else this.onmessage?.({ data: b.buffer.slice(1) });
+    };
+    ws.onclose = ws.onerror = () => { if (this.readyState === 'closed') return; this.readyState = 'closed'; this.onclose?.(); };
+  }
+  send(d) {
+    if (this.ws.readyState !== 1) throw Error('The relay is closed.');
+    const u = typeof d === 'string' ? new TextEncoder().encode(d) : d instanceof Uint8Array ? d : new Uint8Array(d), o = new Uint8Array(u.length + 1);
+    o[0] = typeof d === 'string' ? 0 : 1; o.set(u, 1); this.ws.send(o);
+  }
+  close() { const was = this.readyState; this.readyState = 'closed'; try { this.ws.close(); } catch { /* gone */ } if (was !== 'closed') this.onclose?.(); }
+}
+const token = () => b64(crypto.getRandomValues(new Uint8Array(18)));
+
 export class P2P {
   // identity: { steamid (64-bit, as a string), name }: sent to each peer when its link opens, so every game can name every
   // player (the host also passes on the others' names).
@@ -36,7 +66,7 @@ export class P2P {
     this.toGuest = createRing(1 << 20); this.fromGuest = createRing(1 << 20);
     this.writer = new RingWriter(this.toGuest); this.reader = new RingReader(this.fromGuest);
     this.stats = { out: 0, in: 0, sendFail: 0, notOpen: 0, ringFull: 0, noPeer: 0 };
-    this.role = null; this.peers = new Map(); this.pending = new Map(); this.listeners = new Set(); this.ip = HOST_IP;
+    this.role = null; this.peers = new Map(); this.pending = new Map(); this.relayWait = new Set(); this.listeners = new Set(); this.ip = HOST_IP;
     this.pump();
   }
   get rings() { return { netIn: this.toGuest, netOut: this.fromGuest }; }
@@ -90,10 +120,31 @@ export class P2P {
     };
     return ws;
   }
-  connection() { return new RTCPeerConnection({ iceServers: this.internet ? [{ urls: 'stun:stun.l.google.com:19302' }] : [] }); }
+  // Falls back to the hub relay when the direct link has not opened a few seconds after both sides have each other's codes.
+  relayLater(ip, relay) {
+    const url = hubUrl();
+    if (!relay || !url) return;
+    this.relayWait.add(ip);
+    setTimeout(() => {
+      this.relayWait.delete(ip);
+      if (this.peers.has(ip) || (this.role === 'host' && !this.pending.has(ip)) || (this.role === 'guest' && ip !== HOST_IP) || !this.role) return;
+      const ch = new HubChannel(url, relay), p = this.pending.get(ip);
+      if (p) p.hub = ch; else this.guestHub = ch;
+      this.attach(null, ch, ip);
+    }, RELAY_AFTER_MS);
+  }
+  // ?relayonly=1 (tests): no usable direct route, as between two browsers whose network blocks it, so the hub relay is used.
+  connection() {
+    const relayOnly = typeof location !== 'undefined' && new URLSearchParams(location.search).has('relayonly');
+    return new RTCPeerConnection({ iceServers: this.internet ? [{ urls: 'stun:stun.l.google.com:19302' }] : [], ...(relayOnly ? { iceTransportPolicy: 'relay' } : {}) });
+  }
   attach(pc, ch, ip) {
     ch.binaryType = 'arraybuffer';
     ch.onopen = () => {
+      // Direct and relayed links race; the first one to open carries the game and the other is dropped.
+      const cur = this.peers.get(ip);
+      if (cur && cur !== ch && cur.readyState === 'open') { ch.close(); if (!ch.relayed) pc?.close(); return; }
+      if (ch.relayed) console.log(`p2p: ${ipStr(ip)} linked through the hub relay`);
       this.peers.set(ip, ch); this.pending.delete(ip); this.changed();
       const hello = (who) => { try { ch.send(JSON.stringify({ t: 'name', ...who })); } catch { /* closing */ } };
       if (this.identity) hello(this.identity);
@@ -103,9 +154,12 @@ export class P2P {
       if (typeof e.data === 'string') return this.control(e.data, ch);
       if (this.writer.tryWrite(new Uint8Array(e.data))) this.stats.in++; else this.stats.ringFull++;
     };
-    const gone = () => { if (this.peers.get(ip) === ch) this.peers.delete(ip); this.pending.delete(ip); if (this.role === 'guest' && !this.peers.size) this.role = null; this.changed(); };
+    const gone = () => {
+      if (this.peers.get(ip) !== ch && this.peers.has(ip)) return;          // the other link (direct or relayed) carries the game
+      if (!ch.relayed && this.relayWait.has(ip)) return;                     // a failed direct link still gets the relay
+      if (this.peers.get(ip) === ch) this.peers.delete(ip); this.pending.delete(ip); if (this.role === 'guest' && !this.peers.size) this.role = null; this.changed(); };
     ch.onclose = gone;
-    pc.onconnectionstatechange = () => { if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) gone(); };
+    if (pc) pc.onconnectionstatechange = () => { if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) gone(); };
   }
   // Control messages (text, unlike game datagrams): player names, handed to the game and, on the host, to the other peers.
   control(text, from) {
@@ -130,10 +184,11 @@ export class P2P {
     // pieces stall the join, and pieces arriving out of order (a resend among a newer sequence) make the engine discard
     // the reassembly ("Ignoring duplicated split packet"). In-order delivery avoids both.
     const pc = this.connection(), ch = pc.createDataChannel('gw', { ordered: true });
-    this.pending.set(ip, { pc, ch }); this.attach(pc, ch, ip);
+    const relay = token();
+    this.pending.set(ip, { pc, ch, relay }); this.attach(pc, ch, ip);
     await pc.setLocalDescription(await pc.createOffer()); await gathered(pc);
     this.changed();
-    return { code: await pack({ v: 1, e: this.edition, ip, sdp: pc.localDescription.sdp }), ip: ipStr(ip) };
+    return { code: await pack({ v: 1, e: this.edition, ip, sdp: pc.localDescription.sdp, relay }), ip: ipStr(ip) };
   }
   async finishInvite(code) {
     const a = await unpack(code);
@@ -141,6 +196,7 @@ export class P2P {
     const p = this.pending.get(a.ip);
     if (!p) throw Error('That reply is for an invite that is no longer open. Create a new one.');
     await p.pc.setRemoteDescription({ type: 'answer', sdp: a.sdp });
+    this.relayLater(a.ip, p.relay);
   }
   // Joiner: returns the reply code to send back to the host.
   async acceptInvite(code) {
@@ -153,10 +209,12 @@ export class P2P {
     await pc.setRemoteDescription({ type: 'offer', sdp: o.sdp });
     await pc.setLocalDescription(await pc.createAnswer()); await gathered(pc);
     this.changed();
+    this.relayLater(HOST_IP, o.relay);
     return pack({ v: 1, e: this.edition, ip: o.ip, sdp: pc.localDescription.sdp });
   }
   leave() {
-    for (const { pc } of this.pending.values()) pc.close();
+    for (const { pc, hub } of this.pending.values()) { pc.close(); hub?.close(); }
+    this.guestHub?.close(); this.guestHub = null;
     for (const ch of this.peers.values()) ch.close();
     this.pending.clear(); this.peers.clear(); this.role = null; this.setIp(HOST_IP); this.changed();
   }

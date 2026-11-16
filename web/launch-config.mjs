@@ -15,12 +15,13 @@ const ALWAYS={r_decals:0,mp_decals:0,r_maxmodeldecal:0,r_drawmodeldecals:0,r_dyn
 // r_flashlightdepthres is pinned to 512 on the browser host: a desktop config (or one saved from it) with 8192 costs
 // eight 128 MB shadow maps, about 3 GB of GPU memory in the browser.
 // ?res=640x360 overrides the resolution (also over a saved one), so a slow GPU can be tested or tuned without the menus.
-// win: the browser window size, used on first run (no saved resolution) so menus are not stretched. scale: the launcher's
+// win: the browser window size in device pixels, used on every start (over a saved resolution) so the game is never
+// drawn smaller than the screen and stretched. scale: the launcher's
 // graphics preset, a 3D-only render scale; menus, console and HUD always draw at the full engine resolution.
 export function launchOptions({saved=false,cmdline='',res='',win='',scale=''}={}){
  const dims=v=>{const x=/^(\d{3,4})x(\d{3,4})$/.exec(v);return x&&+x[1]>=640&&+x[2]>=360?[+x[1],+x[2]]:null;};
  const m=dims(res),size=m??dims(win)??[960,540],s=+scale>0?Math.min(1,Math.max(0.25,+scale)):0;
  // An explicit fps_max launch command keeps the engine limiter authoritative.
  const targetFps=/\+fps_max\s+/i.test(cmdline)?0:30;
- return {size,targetFps,command:`"c:\\gamebox\\gmod.exe" -game garrysmod -windowed ${m||!saved?`-w ${size[0]} -h ${size[1]} `:''}-nojoy -novid -wavonly +con_enable 1 ${s?`+mat_viewportscale ${s} +mat_viewportupscale 1 `:''}+mat_queue_mode 0 +fps_max 0 +r_flashlightdepthres 512 ${Object.entries(ALWAYS).map(([k,v])=>`+${k} ${v}`).join(' ')} ${saved?'':Object.entries(LOW).map(([k,v])=>`+${k} ${v}`).join(' ')} ${cmdline}`.trim()};
+ return {size,targetFps,command:`"c:\\gamebox\\gmod.exe" -game garrysmod -windowed ${m||dims(win)||!saved?`-w ${size[0]} -h ${size[1]} `:''}-nojoy -novid -wavonly +con_enable 1 ${s?`+mat_viewportscale ${s} +mat_viewportupscale 1 `:''}+mat_queue_mode 0 +fps_max 0 +r_flashlightdepthres 512 ${Object.entries(ALWAYS).map(([k,v])=>`+${k} ${v}`).join(' ')} ${saved?'':Object.entries(LOW).map(([k,v])=>`+${k} ${v}`).join(' ')} ${cmdline}`.trim()};
 }

@@ -1,0 +1,11 @@
+{
+  "name": "garrys-web-hub",
+  "private": true,
+  "type": "module",
+  "description": "Garry's Web hub. Only the optional Steam sign-in (steam-login.mjs) needs these packages; everything else has no dependencies.",
+  "dependencies": {
+    "qrcode": "1.5.4",
+    "steam-session": "1.9.4",
+    "steam-user": "5.3.0"
+  }
+}

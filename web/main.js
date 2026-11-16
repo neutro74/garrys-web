@@ -87,6 +87,20 @@ if (!params.res) {
 }
 // This browser's player identity: a random Steam account id (kept, so saves and bans stay with the player) and the name
 // chosen in the launcher's chat, used in game (steam.mjs).
+// Signed in to Steam (Profile, web/steam-account.js): the game uses the real SteamID, and real login tickets from the hub
+// are kept ready in shared memory for the next server join: [i32 sequence][i32 length][ticket bytes].
+const steamAcct = steamAccount();
+if (steamAcct) params.steamid = accountId(steamAcct);
+const steamTicketBuf = new SharedArrayBuffer(8 + 4096);
+async function refreshSteamTicket() {
+  try {
+    const r = await steamTicket(); if (!r) return;
+    const bytes = Uint8Array.from(atob(r.ticket), (c) => c.charCodeAt(0)), hdr = new Int32Array(steamTicketBuf, 0, 2);
+    if (bytes.length > 4096) return;
+    new Uint8Array(steamTicketBuf, 8, bytes.length).set(bytes); Atomics.store(hdr, 1, bytes.length); Atomics.add(hdr, 0, 1);
+  } catch (e) { console.warn('Steam ticket:', e.message); }
+}
+if (steamAcct) { refreshSteamTicket(); setInterval(() => steamKeepalive().catch(() => {}), 60e3); }
 try {
   let id = localStorage.getItem('garrys-wasm.steamid');
   if (!/^\d{1,10}$/.test(id ?? '')) { id = String(1e6 + Math.floor(Math.random() * 2e9)); localStorage.setItem('garrys-wasm.steamid', id); }
@@ -118,6 +132,7 @@ import { P2P } from './p2p.js';
 import { GameVoice } from './voice.js';
 import { Lobby } from './lobby.js';
 import { hubUrl } from './hub.js';
+import { steamAccount, accountId, ticket as steamTicket, keepalive as steamKeepalive } from './steam-account.js';
 
 const storage = await openStorage({ library: launchAddons(version) }).catch(e => { status.textContent = `Storage failed: ${e.message}`; throw e; });
 // Addons older builds kept in memory were moved into the library: they stay in the plain edition's "my addons".
@@ -187,6 +202,8 @@ worker.onmessage = (e) => {
     console.log(`[status] ${m.text}`);
   } else if (m.type === 'log') {
     console.log(m.text);
+  } else if (m.type === 'steam-ticket-used') {
+    refreshSteamTicket();
   } else if (m.type === 'quit') {
     // The game was quit: back to the launcher (the page without launch parameters; saved files are already in OPFS).
     try { sessionStorage.removeItem('garrys-wasm.resume'); } catch { /* storage blocked */ }
@@ -199,7 +216,7 @@ worker.onmessage = (e) => {
 };
 worker.onerror = (e) => { status.textContent = `Worker failed: ${e.message}`; console.error(e); };
 let gpuBytes = null;
-worker.postMessage({ type: 'boot', env: params, netRings: p2p?.rings, micRing, cmdline: params.cmd ?? '', htmlRing, inputRing, audioRing, overlayBuffer: storage.buffer, saved: preferences.saved, renderPort }, renderPort ? [renderPort] : []);
+worker.postMessage({ type: 'boot', env: params, netRings: p2p?.rings, micRing, steamTicket: steamAcct ? steamTicketBuf : null, cmdline: params.cmd ?? '', htmlRing, inputRing, audioRing, overlayBuffer: storage.buffer, saved: preferences.saved, renderPort }, renderPort ? [renderPort] : []);
 window.__frames = () => frames;
 // Diagnostics: a file the game wrote (e.g. a con_logfile), read from the overlay even while the engine keeps it open.
 window.__readGameFile = async (p) => { const b = await storage.request('read-file', { path: '/overlay/garrysmod/' + p }); return b ? new TextDecoder().decode(b) : null; };

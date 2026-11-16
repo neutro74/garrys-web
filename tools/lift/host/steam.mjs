@@ -97,7 +97,20 @@ function bundledApps() {
 // and a "logged on" game server that accepts it. The ticket is a fixed token; the server side accepts any ticket
 // (BeginAuthSession -> OK and a ValidateAuthTicketResponse_t callback). Nothing here proves identity: it is for LAN/P2P play only.
 const TICKET_BYTES = 32;
+// Signed in to Steam (web/steam-account.js): g.steamTicket holds a real ticket from the hub ([i32 sequence][i32 length][bytes]),
+// which real servers accept. Each is used once; the page is asked for the next.
 function authTicket(g, buf, cap, lenp) {
+  if (g.steamTicket && buf) {
+    const hdr = new Int32Array(g.steamTicket, 0, 2), len = Atomics.load(hdr, 1);
+    if (len > 0 && len <= (cap | 0)) {
+      g.u8.set(new Uint8Array(g.steamTicket, 8, len), buf);
+      if (lenp) g.u32(lenp, len);
+      Atomics.store(hdr, 1, 0); g.steamTicketUsed?.();
+      g.log?.(`[steam] real login ticket used (${len} bytes)`);
+      return 1;
+    }
+    g.log?.('[steam] no Steam login ticket ready; real servers will refuse this join');
+  }
   const n = Math.min(TICKET_BYTES, cap | 0);
   if (buf && n > 0) { g.u8.fill(0, buf, buf + n); g.u8.set([0x47, 0x57, 0x31], buf); }
   if (lenp) g.u32(lenp, n);

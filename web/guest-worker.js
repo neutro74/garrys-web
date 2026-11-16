@@ -14,7 +14,7 @@ self.onmessage = async (e) => {
 };
 
 
-async function boot({ env, cmdline, htmlRing, inputRing, audioRing, overlayBuffer, saved, renderPort, netRings, micRing }) {
+async function boot({ env, cmdline, htmlRing, inputRing, audioRing, overlayBuffer, saved, renderPort, netRings, micRing, steamTicket }) {
   globalThis.__env = env;     // platform.mjs reads this at import time
 
   status('Loading host...');
@@ -80,6 +80,8 @@ async function boot({ env, cmdline, htmlRing, inputRing, audioRing, overlayBuffe
   g.inputCursor = hidden => post({type:'cursor', hidden});
   // Voice chat: the page captures the microphone into micRing while the game records (steam.mjs voice calls).
   if (micRing) { g.micIn = new RingReader(micRing); g.voiceCapture = (on) => post({ type: 'voice', on }); }
+  // Steam sign-in: real login tickets for real servers, written by the page (main.js); the page fetches the next one after each use.
+  if (steamTicket) { g.steamTicket = steamTicket; g.steamTicketUsed = () => post({ type: 'steam-ticket-used' }); }
   const { launchOptions } = await import('./launch-config.mjs');
   // Multiplayer: the engine's queued-packet thread would send the rest of each split packet from a thread worker, which has no
   // link to the network ring (those packets were silently lost and joins stalled); send from the main thread, 8 pieces a frame.

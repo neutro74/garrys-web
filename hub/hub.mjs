@@ -12,6 +12,7 @@ import { createWorkshop } from './workshop.mjs';
 import { createVersions } from './versions.mjs';
 import { createAccounts } from './accounts.mjs';
 import { createServers } from './servers.mjs';
+import { createSteamLogin } from './steam-login.mjs';
 
 const PORT = +(process.env.PORT ?? 8787), HOST = process.env.HOST ?? '0.0.0.0';
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
@@ -201,12 +202,13 @@ function handle(c, m) {
 const clientIp = (req) => (TRUST_PROXY && (req.headers['cf-connecting-ip'] || String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim())) || req.socket.remoteAddress;
 const originOk = (o) => !ORIGINS.length || ORIGINS.includes(o);
 const cors = (req) => ({ 'Access-Control-Allow-Origin': originOk(req.headers.origin) && req.headers.origin ? req.headers.origin : ORIGINS[0] ?? '*', Vary: 'Origin' });
-const workshop = createWorkshop(), versions = createVersions(), accounts = createAccounts(), servers = createServers({ log: console.log });
+const workshop = createWorkshop(), versions = createVersions(), accounts = createAccounts(), servers = createServers({ log: console.log }), steamLogin = createSteamLogin({ log: console.log });
 const server = http.createServer(async (req, res) => {
   if (await workshop(req, res, { ip: clientIp(req), headers: cors(req) })) return;
   if (await versions(req, res, { ip: clientIp(req), headers: cors(req) })) return;
   if (await accounts(req, res, { ip: clientIp(req), headers: cors(req) })) return;
   if (await servers.handle(req, res, { ip: clientIp(req), headers: cors(req) })) return;
+  if (await steamLogin(req, res, { ip: clientIp(req), headers: cors(req) })) return;
   if (req.url === '/health' || req.url === '/status') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...cors(req) });
     return res.end(JSON.stringify({ ok: true, online: clients.size, rooms: roomList(), lobbies: lobbies.size }));

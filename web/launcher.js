@@ -6,6 +6,7 @@
 
 import { Hub, hubStatus, playerId } from './hub.js';
 import { account, login, register, logout, changePassword, sync, autoSync } from './account.js';
+import { steamBox, steamAccount } from './steam-account.js';
 import { launchAddons, versions, getVersion, putVersion, removeVersion, newVersionId, libraryMeta, hasFile, downloadWorkshop, workshopDetails, hubJson, hubHttp, impact, shareVersion, fetchSharedVersion, wsName } from './library.js';
 
 const root = document.getElementById('launcher');
@@ -222,7 +223,7 @@ function profilePanel(el, hub, onAccount = () => {}) {
   const color = store.get('playercolor-hex', '');
   el.innerHTML = `<div class="panel-head"><img src="${game('html/img/play.png')}" alt=""><span>Profile</span><a href="#" class="x" data-close title="Close">✕</a></div>
     <div class="panel-body">
-      ${hubHttp() ? '<div data-account></div>' : ''}
+      ${hubHttp() ? '<div data-account></div><div data-steam></div>' : ''}
       <label class="field"><span>Name</span><input data-name maxlength="24" autocomplete="nickname" spellcheck="false"></label>
       <p class="hint">Shown to other players in chat and in multiplayer games. 2 to 24 characters.</p>
       <div class="field"><span>Player colour</span><div class="swatches" role="radiogroup">${COLORS.map(([h, n]) => `<button type="button" role="radio" title="${n}" data-color="${h}" style="background:${h}"></button>`).join('')}
@@ -233,8 +234,8 @@ function profilePanel(el, hub, onAccount = () => {}) {
     </div>`;
   const $ = (q) => el.querySelector(q), input = $('[data-name]'), msg = $('[data-msg]');
   input.value = store.get('name', '') || hub.name;
-  const id = +playerId();
-  $('[data-id]').textContent = `STEAM_0:${id % 2}:${Math.floor(id / 2)}`;
+  const sa = steamAccount(), id = sa ? Number(BigInt(sa.steamid) - 76561197960265728n) : +playerId();
+  $('[data-id]').textContent = `STEAM_0:${id % 2}:${Math.floor(id / 2)}${sa ? ' (your Steam account)' : ''}`;
   let pick = color;
   const showPick = () => { for (const b of el.querySelectorAll('[data-color]')) b.setAttribute('aria-checked', String(b.dataset.color === pick)); };
   for (const b of el.querySelectorAll('[data-color]')) b.addEventListener('click', () => { pick = b.dataset.color; showPick(); });
@@ -249,6 +250,8 @@ function profilePanel(el, hub, onAccount = () => {}) {
   $('[data-save]').addEventListener('click', save);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
   // Signing in or out changes the settings shown here (the account's replace this browser's): redraw.
+  const steamEl = $('[data-steam]');
+  if (steamEl) steamBox(steamEl, esc);
   const box = $('[data-account]');
   if (box) accountBox(box, () => { onAccount(); profilePanel(el, hub, onAccount); el.querySelector('[data-close]')?.addEventListener('click', (ev) => { ev.preventDefault(); onAccount('close'); }); });
   if (!account()) setTimeout(() => input.focus(), 50);

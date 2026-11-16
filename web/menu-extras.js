@@ -279,10 +279,10 @@ GW.joinReal = GW.joinReal or JoinServer
 function JoinServer(addr)
   addr = tostring(addr) load().hist[addr] = true save() GW.last = addr
   if addr:sub(1, 6) == "10.78." then js("window.__gwJoin && __gwJoin('" .. string.JavascriptSafe(addr) .. "')") return end
-  -- Servers outside Garry's Web check each player's Steam login, which this build cannot give them (they answer
-  -- "STEAM validation rejected"), so say so instead of trying.
-  GW.Message("This server is not a Garry's Web game. Servers like it check that every player is signed in to Steam, which Garry's Web cannot do yet, so it would turn you away. Garry's Web games (other players' games started from Start New Game) can be joined.", "Can't join this server")
+  -- Servers outside Garry's Web check each player's Steam login with Valve: the page decides (signed in to Steam or not).
+  js("window.__gwJoinReal && __gwJoinReal('" .. string.JavascriptSafe(addr) .. "')")
 end
+function GW.DoJoinReal(addr) if GW.joinReal then GW.joinReal(addr) else RunConsoleCommand("connect", addr) end end
 function serverlist.IsCurrentServerFavorite() return GW.last ~= nil and load().fav[GW.last] == true end
 -- Shown by the menu page (a Derma popup would sit behind the server browser's HTML, out of sight).
 function GW.Message(text, title) js("window.__gwMessage && __gwMessage('" .. string.JavascriptSafe(text) .. "', '" .. string.JavascriptSafe(title or "Multiplayer") .. "')") end
@@ -319,6 +319,17 @@ async function serverBrowser() {
     box.append(h, t, ok); back.appendChild(box); document.body.appendChild(back);
   };
   window.__gwMessage = message;
+  // Real servers need a real Steam login (Profile -> Sign in with Steam in the launcher, web/steam-account.js).
+  window.__gwJoinReal = (address) => {
+    let signedIn = false;
+    try { signedIn = !!JSON.parse(localStorage.getItem('garrys-wasm.steam') ?? 'null')?.key; } catch { /* storage blocked */ }
+    if (!signedIn) {
+      message("This server is not a Garry's Web game. Servers like it check that every player is signed in to Steam with a copy of Garry's Mod. To join them, quit to the launcher, open Profile and choose Sign in with Steam (optional). Garry's Web games can be joined without it.", "Steam sign-in needed");
+      return;
+    }
+    notice('Connecting with your Steam account...'); setTimeout(() => notice(''), 6000);
+    run('GW.DoJoinReal(%s)', String(address));
+  };
 
   // Garry's Web games get stable stand-in addresses for the browser's lists.
   const fake = new Map(), byFake = new Map();

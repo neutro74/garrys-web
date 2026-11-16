@@ -12,6 +12,12 @@ One small Node server (no dependencies) for the browser build's online features:
 - **Real servers** (`hub/servers.mjs`): Steam's server list for Garry's Mod (`GET /servers`, needs `STEAM_KEY`), with each
   server asked for A2S_INFO from the hub for its details and ping, and a UDP relay (WebSocket `/udp`) so the browser can
   play on them. The relay only reaches addresses known to be Garry's Mod servers and caps each connection at 1 MB/s.
+- **Paired relay** (`/pair`): carries a peer-to-peer game's traffic between two players whose browsers cannot reach each
+  other directly.
+- **Steam sign-in** (`hub/steam-login.mjs`, optional): a player approves a QR login in the Steam mobile app; the hub keeps
+  the refresh token encrypted with a key only that player's browser holds, and while they play it stays logged on to Steam
+  for them and hands the game real login tickets, which regular Garry's Mod servers require. This is the only part that
+  needs packages (`steam-session`, `steam-user`, `qrcode`: `npm install` in `hub/`); without them the rest runs as before.
 
 ## Running it
 
@@ -38,6 +44,7 @@ The page finds the hub from `?hub=wss://…` (remembered), else `HUB_DEFAULT` in
 
 ```
 sudo install -m 644 hub/*.mjs /opt/gmod-hub/
+(cd hub && npm install --omit=dev) && sudo cp -r hub/node_modules hub/package.json /opt/gmod-hub/   # Steam sign-in only
 sudo install -m 644 hub/gmod-hub.service /etc/systemd/system/ && sudo systemctl daemon-reload
 sudo systemctl restart gmod-hub
 sudo tailscale funnel --bg 8787

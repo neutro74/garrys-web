@@ -304,6 +304,7 @@ body { background: #000; }
 #launcher .admin .dialog { position: absolute; z-index: 2; top: 60px; left: 50%; transform: translateX(-50%); width: min(420px, 92%); background: #fff; border: 1px solid #bbb; border-radius: 6px; box-shadow: 0 6px 30px rgba(0,0,0,.4); padding: 12px 14px; display: grid; gap: 8px; font-size: 13px; }
 #launcher .admin .dialog .opts { display: grid; gap: 4px; }
 #launcher .admin .dialog label.off { color: #999; }
+#launcher .admin .dialog .warn { color: #c60; font-weight: bold; }
 #launcher .panel.admin .err { flex: none; padding: 6px 12px; background: #fdd; color: #900; border-bottom: 1px solid #e99; font-size: 13px; }
 #launcher .admin .dialog label { display: flex; gap: 6px; align-items: center; }
 #launcher .admin .dialog label input[data-reason] { flex: 1; }

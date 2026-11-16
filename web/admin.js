@@ -87,7 +87,11 @@ export function openAdmin(root) {
     const d = document.createElement('form'); d.className = 'dialog';
     // The hub refuses local and tunnel addresses (everyone behind the tunnel would share them).
     const local = (ip) => /^(127\.|::1$|::ffff:127\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|10\.|192\.168\.|fd7a:)/.test(ip ?? '');
+    // An address many different browsers come from (a school, a VPN, or the tunnel itself) is left unticked: banning it
+    // would also ban everyone else there.
+    const sharers = (ip) => new Set([...st.online, ...st.recent].filter((x) => x.ip === ip).map((x) => x.device ?? x.id)).size;
     const opt = (k, label, v) => (!v ? '' : k === 'ip' && local(v) ? `<label class="off"><input type="checkbox" disabled> ${label} <code>${esc(v)}</code> <small>(local address, cannot be banned)</small></label>`
+      : k === 'ip' && sharers(v) > 3 ? `<label><input type="checkbox" data-t="${k}"> ${label} <code>${esc(v)}</code> <small class="warn">shared by ${sharers(v)} browsers: banning it bans them all</small></label>`
       : `<label><input type="checkbox" data-t="${k}" checked> ${label} <code>${esc(v)}</code></label>`);
     d.innerHTML = `<b>${kind === 'ban' ? 'Ban' : 'Mute'} ${esc(p.name ?? p.account ?? p.ip ?? '')}</b>
       <div class="opts">${opt('device', 'This browser', p.device)}${opt('ip', 'Internet address', p.ip)}${opt('account', 'Account', p.account)}</div>

@@ -210,7 +210,11 @@ export function createAdmin({ accounts, hub }) {
         proc = spawn('python3', [fileURLToPath(new URL('./term-pty.py', import.meta.url)), key, path.join(STATE_DIR, 'known_hosts'), SSH_TARGET, String(m.rows | 0 || 24), String(m.cols | 0 || 80)],
           { stdio: ['pipe', 'pipe', 'pipe', 'pipe'], env: { PATH: process.env.PATH, HOME: process.env.HOME ?? STATE_DIR, TERM: 'xterm-256color', LANG: 'C.UTF-8' } });
         terms.add(c); audit(s.user, 'terminal-open', { ip: c.ip });
-        proc.stdout.on('data', (d) => c.sendBinary(d));
+        // Lots of output at once (cat on a big file): pause the shell until the socket drains rather than drop bytes.
+        proc.stdout.on('data', (d) => {
+          c.sendBinary(d);
+          if (c.socket.writableLength > 1 << 20) { proc.stdout.pause(); c.socket.once('drain', () => proc.stdout.resume()); }
+        });
         proc.stderr.on('data', (d) => c.sendBinary(d));
         proc.on('exit', (code) => { terms.delete(c); c.send({ t: 'exit', code }); setTimeout(() => c.close(1000), 200); });
         proc.on('error', (e) => c.send({ t: 'error', error: e.message }));

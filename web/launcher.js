@@ -32,7 +32,7 @@ const EDITIONS = {
 // The third news card: Garry's Web itself (not playable), with where to find the community and the author.
 const ABOUT = {
   name: "Garry's Web", short: 'About Garry\'s Web', banner: true,
-  links: { server: 'https://discord.gg/PDPSqSKtT', profile: 'https://discordapp.com/users/827905760531841074' },
+  links: { server: 'https://discord.gg/gYAvvh4apA', profile: 'https://discordapp.com/users/827905760531841074' },
   blurb: () => `Garry's Mod in your browser: build, play and chat together with nothing to install.<br>`
     + `Community: <a href="${ABOUT.links.server}" target="_blank" rel="noopener">Join the Discord server</a><br>`
     + `Made by <b>neutro74</b> · <a href="${ABOUT.links.profile}" target="_blank" rel="noopener">Discord profile</a>`,
@@ -569,10 +569,12 @@ function menu(ext, backdrop, opts = {}) {
     const showOnline = (n) => { if (onlineEl) onlineEl.textContent = n ? ` ${n} online` : ''; };
     if (onlineEl) hubStatus(hub.url).then((s) => showOnline(s?.online));
     hub.on('welcome', (m) => showOnline(m.online));
-    let panel = null, closePanel = null, card = edition;   // card: the news card shown (an edition, or 'about')
+    // card: the news card shown (an edition, or 'about'). Hovering or focusing an edition shows it; leaving goes back to `rest`,
+    // which is the About card until a pager square picks another.
+    let panel = null, closePanel = null, rest = 'about', card = rest;
     const openPanel = (k) => {
       closePanel?.(); closePanel = null;
-      if (k === 'about') { if (panel) openPanel(panel); showCard('about'); return; }
+      if (k === 'about') { if (panel) openPanel(panel); rest = 'about'; showCard('about'); return; }
       if (k === 'fullscreen') {
         if (document.fullscreenElement) document.exitFullscreen?.(); else document.documentElement.requestFullscreen?.().catch(() => {});
         return;
@@ -623,8 +625,10 @@ function menu(ext, backdrop, opts = {}) {
       a.addEventListener('click', (ev) => { ev.preventDefault(); play(a.dataset.ed); });
       a.addEventListener('pointerenter', () => setEdition(a.dataset.ed));
       a.addEventListener('focus', () => setEdition(a.dataset.ed));
+      a.addEventListener('pointerleave', () => showCard(rest));
+      a.addEventListener('blur', () => showCard(rest));
     }
-    for (const d of page.querySelectorAll('[data-pager]')) d.addEventListener('click', () => { if (panel) openPanel(panel); showCard(d.dataset.pager); });
+    for (const d of page.querySelectorAll('[data-pager]')) d.addEventListener('click', () => { if (panel) openPanel(panel); rest = d.dataset.pager; showCard(rest); });
     $('[data-gfx]').addEventListener('click', () => { popup.hidden = !popup.hidden; if (!popup.hidden) popup.querySelector('.active')?.focus(); });
     for (const li of popup.children) {
       const pick = () => { setQuality(li.dataset.q); popup.hidden = true; $('[data-gfx]').focus(); };

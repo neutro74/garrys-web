@@ -16,6 +16,16 @@ export function addonPath(path) {
   return path.toLowerCase();
 }
 
+// Title, description and author from the start of a GMA (the first few KB are enough), without reading its files.
+export function readGmaHeader(input) {
+  const bytes=input instanceof Uint8Array?input:new Uint8Array(input);let pos=0;
+  const str=()=>{const start=pos;while(pos<bytes.length&&bytes[pos]!==0)pos++;if(pos>=bytes.length)throw new Error('GMA header truncated');return displayDecode.decode(bytes.subarray(start,pos++));};
+  if(decode.decode(bytes.subarray(0,4))!=='GMAD')throw new Error('GMA magic mismatch');
+  const version=bytes[4];pos=5+16;
+  if(version>1)while(str()!=='');
+  const name=str(),description=str(),author=str();
+  return {name,description,author,version};
+}
 export function readGma(input, { maxBytes=256*1024*1024, maxFiles=100000, strictArchiveCrc=true }={}) {
   const bytes=input instanceof Uint8Array?input:new Uint8Array(input);
   if(bytes.length>maxBytes) throw new Error('GMA exceeds byte limit');

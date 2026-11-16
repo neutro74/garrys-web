@@ -14,7 +14,7 @@ self.onmessage = async (e) => {
 };
 
 
-async function boot({ env, cmdline, htmlRing, inputRing, audioRing, overlayBuffer, saved, renderPort, netRings }) {
+async function boot({ env, cmdline, htmlRing, inputRing, audioRing, overlayBuffer, saved, renderPort, netRings, micRing }) {
   globalThis.__env = env;     // platform.mjs reads this at import time
 
   status('Loading host...');
@@ -47,6 +47,9 @@ async function boot({ env, cmdline, htmlRing, inputRing, audioRing, overlayBuffe
     const response = await fetch(new URL('../game-ext-index.json', import.meta.url));
     if (!response.ok) throw new Error('The Extended edition is not part of this build (game-ext-index.json is missing). Choose Base game.');
     const tree = await response.json();
+    // Bundled addons the player switched off (in-game Addons page) are left out, so the engine never mounts them.
+    for (const name of String(env.disabledAddons ?? '').split(',').filter(Boolean)) if (tree.garrysmod?.addons) delete tree.garrysmod.addons[name];
+    delete tree['wasm-addons']; delete tree['wasm-addons.json'];   // the Addons page's list and pictures, not game files
     const { mergeTree, listFiles } = await import(host + 'edition-fs.mjs');
     mergeTree(index, tree);
     ext = { base: new URL('../game/ext/', import.meta.url).href, files: listFiles(tree) };
@@ -75,6 +78,8 @@ async function boot({ env, cmdline, htmlRing, inputRing, audioRing, overlayBuffe
   const inputEvents = new RingReader(inputRing), inputDecoder = new TextDecoder();
   g.inputPoll = () => { const out = []; for (let f; (f = inputEvents.read());) out.push(JSON.parse(inputDecoder.decode(f))); return out; };
   g.inputCursor = hidden => post({type:'cursor', hidden});
+  // Voice chat: the page captures the microphone into micRing while the game records (steam.mjs voice calls).
+  if (micRing) { g.micIn = new RingReader(micRing); g.voiceCapture = (on) => post({ type: 'voice', on }); }
   const { launchOptions } = await import('./launch-config.mjs');
   const options = launchOptions({ saved: env.low === '1' ? false : saved, cmdline: env.mp === '1' ? `+sv_lan 1 ${cmdline}` : cmdline, res: env.res ?? '', win: env.win ?? '', scale: env.scale ?? '' });
   g.cmdline = g.cstr(options.command);

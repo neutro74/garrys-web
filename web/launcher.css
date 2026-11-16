@@ -124,10 +124,110 @@ body { background: #000; }
 #launcher .btn { color: #333; background: linear-gradient(#fff, #e6e6e6); border: 1px solid #bbb; border-bottom-color: #a2a2a2; }
 #launcher .btn:hover { background: #e6e6e6; }
 
+
+/* ---- Smaller menu entries and the panels they open (in the news card's place) ---- */
+#launcher .options li.gap.small { height: 14px; }
+#launcher .options li.sub a { font-size: 17px; letter-spacing: -.5px; color: #ddd; line-height: 1.35; }
+#launcher .options li.sub a:hover, #launcher .options li.sub a:focus-visible { color: #ffa; }
+#launcher .options li.sub a.cur { color: #ff5; }
+#launcher .options li.sub small { font-size: 12px; font-weight: normal; color: #9f9; margin-left: 4px; letter-spacing: 0; }
+#launcher .side { position: absolute; right: 50px; top: 75px; bottom: 20px; width: 512px; display: flex; flex-direction: column; }
+#launcher .side .news { position: static; width: auto; }
+#launcher .side [hidden] { display: none !important; }
+#launcher .whatsnew { margin-top: 14px; border-radius: 8px; background: rgba(0,0,0,.7); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); box-shadow: 0 0 10px 1px rgba(0,0,0,.4); padding: 8px 10px 9px; color: #ddd; text-shadow: 1px 1px 1px #000; }
+#launcher .whatsnew_head { display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: bold; color: #fff; margin-bottom: 4px; }
+#launcher .whatsnew_head img { width: 20px; height: 20px; }
+#launcher .whatsnew ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: 12px; line-height: 1.35; }
+#launcher .whatsnew b { color: #ffa; }
+#launcher .panel { flex: 0 1 auto; min-height: 0; max-height: 100%; display: flex; flex-direction: column; border-radius: 8px; background: #fff; color: #333; box-shadow: 0 0 10px 1px rgba(0,0,0,.4); overflow: hidden; user-select: text; }
+#launcher .panel-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: linear-gradient(#f7f7f7, #e8e8e8); border-bottom: 1px solid #ccc; font-size: 20px; font-weight: bold; letter-spacing: -.5px; color: #444; }
+#launcher .panel-head img { width: 24px; height: 24px; }
+#launcher .panel-head small { font-size: 12px; font-weight: normal; color: #4a4; letter-spacing: 0; }
+#launcher .panel-head .x { margin-left: auto; color: #888; font-size: 16px; padding: 0 4px; }
+#launcher .panel-head .x:hover { color: #000; }
+#launcher .panel-body { padding: 10px 12px 12px; overflow: auto; font-size: 13px; }
+#launcher .panel .hint { color: #777; font-size: 12px; margin: 8px 0; }
+#launcher .panel .row { display: flex; flex-wrap: wrap; gap: 6px; }
+#launcher table.facts { width: 100%; border-collapse: collapse; }
+#launcher table.facts td { padding: 4px 2px; border-bottom: 1px solid #eee; }
+#launcher table.facts td:first-child { color: #666; width: 45%; }
+#launcher table.facts small { color: #999; margin-left: 4px; }
+#launcher kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px solid #bbb; border-bottom-width: 2px; border-radius: 4px; background: #f6f6f6; font: bold 11px/16px Consolas, Menlo, monospace; color: #333; text-align: center; }
+/* Profile: the account box and labelled fields with colour swatches. */
+#launcher .acct { padding: 8px 10px; margin-bottom: 10px; border-radius: 6px; background: #f2f7fb; border: 1px solid #d6e6f2; color: #345; }
+#launcher .acct form { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+#launcher .acct input { flex: 1 1 120px; min-width: 0; padding: 6px 8px; border: 1px solid #abadb3; border-radius: 3px; font: 13px "Helvetica Neue", Helvetica, Arial, sans-serif; }
+#launcher .acct .row { margin-top: 6px; }
+#launcher .acct .hint { margin: 4px 0 0; }
+#launcher .panel .field { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; }
+#launcher .panel .field > span { width: 110px; flex: none; color: #555; font-weight: bold; }
+#launcher .panel .field input { flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid #abadb3; border-radius: 3px; font: 14px "Helvetica Neue", Helvetica, Arial, sans-serif; }
+#launcher .panel .field input:focus { outline: 2px solid #08c; outline-offset: -1px; }
+#launcher .swatches { display: flex; flex-wrap: wrap; gap: 5px; }
+#launcher .swatches button { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px #aaa; cursor: pointer; padding: 0; color: #777; font-weight: bold; }
+#launcher .swatches button.none { background: #f4f4f4; }
+#launcher .swatches button[aria-checked="true"] { box-shadow: 0 0 0 3px #08c; }
+
+/* Game versions: under the editions in the menu list, and their panel (list + editor). */
+#launcher .options li.ver a { font-size: 17px; letter-spacing: -.5px; color: #eee; line-height: 1.3; }
+#launcher .options li.ver a::before { content: '▸ '; color: #ffa; }
+#launcher .options li.ver small { font-size: 11px; font-weight: normal; color: #bbb; letter-spacing: 0; margin-left: 4px; }
+#launcher .vlist { display: grid; gap: 6px; margin: 4px 0 10px; }
+#launcher .vrow { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; align-items: center; padding: 8px; border: 1px solid #e3e3e3; border-radius: 6px; background: #fafafa; }
+#launcher .vrow.hl { border-color: #08c; box-shadow: 0 0 0 2px rgba(0,136,204,.2); }
+#launcher .vinfo b { font-size: 14px; color: #222; }
+#launcher .vinfo small { color: #777; }
+#launcher .vbtns { display: flex; gap: 4px; }
+#launcher .vbtns .btn, #launcher .vbtns .btn-primary { padding: 4px 10px; font-size: 12px; }
+#launcher .vshare { grid-column: 1 / -1; display: flex; gap: 6px; }
+#launcher .vshare input { flex: 1; min-width: 0; padding: 4px 6px; border: 1px solid #abadb3; border-radius: 3px; font: 12px Consolas, Menlo, monospace; }
+#launcher .weight { font-size: 11px; font-weight: bold; margin-left: 4px; }
+#launcher .panel .field.top { align-items: flex-start; }
+#launcher .panel details.field { display: block; margin-top: 8px; }
+#launcher .panel details summary { cursor: pointer; color: #555; font-weight: bold; margin: 4px 0; }
+#launcher .seg { display: flex; border: 1px solid #abadb3; border-radius: 4px; overflow: hidden; }
+#launcher .seg button { border: 0; background: #f4f4f4; padding: 5px 14px; font-weight: bold; color: #555; cursor: pointer; }
+#launcher .seg button.on { background: #08c; color: #fff; }
+#launcher .addons { flex: 1; min-width: 0; display: grid; gap: 3px; }
+#launcher .arow { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-bottom: 1px solid #f0f0f0; }
+#launcher .arow img { width: 32px; height: 32px; object-fit: cover; border-radius: 3px; background: #ddd; flex: none; }
+#launcher .arow span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#launcher .arow small { color: #888; white-space: nowrap; }
+#launcher .arow a { color: #08c; font-weight: bold; white-space: nowrap; }
+#launcher .addons form.say input { flex: 1; }
+#launcher .panel-body { overflow-x: hidden; }
+#launcher .addons .total { font-weight: bold; color: #444; margin-top: 2px; }
+#launcher .addons .muted, #launcher .muted { color: #999; }
+#launcher .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; max-height: 160px; overflow: auto; font-size: 12px; }
+/* Chat: room tabs, the log, and a send row. */
+#launcher .panel .tabs { flex: none; display: flex; gap: 2px; padding: 6px 8px 0; background: #eee; border-bottom: 1px solid #ccc; overflow-x: auto; scrollbar-width: none; }
+#launcher .panel .tabs button { border: 1px solid #ccc; border-bottom: 0; border-radius: 5px 5px 0 0; background: #ddd; color: #555; padding: 5px 10px; font-size: 12px; font-weight: bold; cursor: pointer; white-space: nowrap; }
+#launcher .panel .tabs button.on { background: #fff; color: #222; margin-bottom: -1px; padding-bottom: 6px; }
+#launcher .panel .tabs button.unread::after { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #08c; margin-left: 5px; vertical-align: middle; }
+#launcher .panel .tabs small { font-weight: normal; color: #888; }
+#launcher .panel .log { flex: 1 1 auto; height: 300px; min-height: 120px; overflow-y: auto; padding: 6px 10px; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+#launcher .panel .log > div { padding: 1px 0; }
+#launcher .panel .log time { color: #aaa; font-size: 11px; margin-right: 6px; }
+#launcher .panel .log b { margin-right: 6px; }
+#launcher .panel .log .sys { color: #999; font-style: italic; }
+#launcher .panel .log .mine span { color: #000; }
+#launcher .panel .say { flex: none; display: flex; gap: 6px; padding: 8px; border-top: 1px solid #ddd; background: #f6f6f6; }
+#launcher .panel .say input { min-width: 0; padding: 6px 8px; border: 1px solid #abadb3; border-radius: 3px; font: 13px "Helvetica Neue", Helvetica, Arial, sans-serif; color: #333; background: #fff; }
+#launcher .panel .say [data-name] { width: 110px; flex: none; font-weight: bold; }
+#launcher .panel .say [data-text] { flex: 1; }
+#launcher .panel .say input:focus { outline: 2px solid #08c; outline-offset: -1px; }
+#launcher .panel .say .btn-primary { padding: 5px 14px; }
+
 /* Menu.css shrinks the news card on small screens; below that there is no room beside the list. */
-@media (max-width: 1000px) { #launcher .news { width: 256px; } #launcher .news_item { height: 128px; } #launcher .news_item > div { font-size: medium; } #launcher .news_item font { font-size: x-small; } }
+@media (max-width: 1000px) { #launcher .side { width: 360px; } #launcher .news_item { height: 180px; } #launcher .news { width: auto; } #launcher .news_item > div { font-size: medium; } #launcher .news_item font { font-size: x-small; } }
 @media (max-width: 760px) {
-  #launcher .news { display: none; }
+  #launcher .side .news { display: none; }
+  #launcher .side { left: 12px; right: 12px; width: auto; top: auto; bottom: 60px; max-height: 60%; }
+  #launcher .side:not(:has(.panel:not([hidden]))) { display: none; }
+  #launcher .page:has(.panel:not([hidden])) .options { display: none; }
+  #launcher .page:has(.panel:not([hidden])) .side { top: 12px; bottom: 12px; max-height: none; }
+  #launcher .panel { max-height: 100%; }
+  #launcher .panel .log { height: auto; }
   #launcher .options { padding: 24px 0 0 0; width: 100%; }
   #launcher .options ul { margin-left: 12px; }
   #launcher .options li.logo img { width: 230px; height: auto; }
@@ -138,6 +238,7 @@ body { background: #000; }
   #launcher .server_info .text .small { font-size: 14px; line-height: 20px; }
   #launcher .spambox { display: none; }
 }
+@media (max-height: 600px) { #launcher .whatsnew { display: none; } }
 @media (max-height: 560px) { #launcher .options { padding-top: 16px; } #launcher .options li.logo img { width: 216px; height: 96px; } }
 @media (prefers-reduced-motion: reduce) {
   #launcher .backdrop .slide { animation: none !important; transform: scale(1.04); }

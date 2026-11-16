@@ -51,6 +51,22 @@ if (!inlineRender) {
 const params = { ...Object.fromEntries(new URLSearchParams(location.search)), ...(globalThis.__launch ?? {}) };
 // First-run engine size: the window in CSS pixels (even, at most 1920x1080), so 2D is drawn 1:1 instead of stretched.
 params.win = `${Math.min(1920, innerWidth & ~1)}x${Math.min(1080, innerHeight & ~1)}`;
+// This browser's player identity: a random Steam account id (kept, so saves and bans stay with the player) and the name
+// chosen in the launcher's chat, used in game (steam.mjs).
+try {
+  let id = localStorage.getItem('garrys-wasm.steamid');
+  if (!/^\d{1,10}$/.test(id ?? '')) { id = String(1e6 + Math.floor(Math.random() * 2e9)); localStorage.setItem('garrys-wasm.steamid', id); }
+  params.steamid ??= id;
+  params.name ??= localStorage.getItem('garrys-wasm.name') || `Player${id.slice(-4)}`;
+  // Player colour from the launcher's Profile (r g b, 0..1), applied like the in-game Player Model editor does.
+  const color = localStorage.getItem('garrys-wasm.playercolor');
+  if (/^[\d.]+ [\d.]+ [\d.]+$/.test(color ?? '')) params.cmd = `${params.cmd ?? ''} +cl_playercolor "${color}"`.trim();
+} catch { /* storage blocked: the shim's defaults */ }
+// Bundled addons switched off on the in-game Addons page (menu-extras.js); they are left out of the file tree at startup.
+// A custom game version (launcher.js) fixes the edition, the bundled addons left out, and the library addons mounted.
+const version = params.version ? getVersion(params.version) : null;
+if (version) { params.edition = version.edition; params.disabledAddons = (version.disabled ?? []).join(','); }
+try { params.disabledAddons ??= JSON.parse(localStorage.getItem('garrys-wasm.disabled-addons') ?? '[]').join(','); } catch { /* storage blocked */ }
 
 import { GameAudio } from './audio.js';
 import { createAudioRing } from '../tools/lift/host/waveout.mjs';
@@ -58,14 +74,24 @@ import { GameInput } from './input.js';
 import { HtmlPanels } from './html-panels.js';
 import { createRing, RingWriter } from '../tools/lift/host/ring.mjs';
 import { openStorage, menuHost } from './storage.js';
+import { getVersion, launchAddons, updateMeta } from './library.js';
+import { autoSync } from './account.js';
+autoSync();   // signed in: in-game changes (versions, addons) reach the account
 import { P2P } from './p2p.js';
+import { GameVoice } from './voice.js';
+import { Lobby } from './lobby.js';
+import { hubUrl } from './hub.js';
 
-const storage = await openStorage().catch(e => { status.textContent = `Storage failed: ${e.message}`; throw e; });
+const storage = await openStorage({ library: launchAddons(version) }).catch(e => { status.textContent = `Storage failed: ${e.message}`; throw e; });
+// Addons older builds kept in memory were moved into the library: they stay in the plain edition's "my addons".
+for (const m of storage.migrated) updateMeta(m.name, { title: m.name.replace(/\.gma$/, ''), size: m.size, global: true, added: Date.now() });
+const session = { version, active: new Set(storage.library) };
 const preferences = await storage.request('preferences');
 
 const worker = new Worker(new URL('./guest-worker.js', import.meta.url), { type: 'module' });
 let frames = 0;
 const audioRing = createAudioRing(), audio = new GameAudio(audioRing);
+const micRing = createRing(64 * 1024), voice = new GameVoice(micRing);
 window.__audio = () => audio.stats();
 
 // Page -> guest events for HTML panels; the guest polls them, so writes never block the page.
@@ -77,9 +103,13 @@ if (document.hidden) input.send({ type: 'focus', focused: false });
 const panels = new HtmlPanels(document.body, canvas, (ev) => { if (!htmlWriter.tryWrite(enc.encode(JSON.stringify(ev)))) console.warn('html event ring full'); });
 // Peer-to-peer play (web/p2p.js): packets between the engine's UDP sockets and WebRTC peers. Pairing is driven from the in-game
 // Multiplayer page (menu-extras.js); both players must run the same edition.
-const p2p = params.mp === '1' ? new P2P({ edition: params.edition === 'extended' ? 'extended' : 'base' }) : null;   // experimental: ?mp=1
+const edition = params.edition === 'extended' ? 'extended' : 'base';
+// With a hub, games are found and paired through it (web/lobby.js) and may cross the internet, so WebRTC also asks one public
+// STUN server for this browser's public address; without a hub, pairing is by invite codes on the local network only.
+const p2p = params.mp === '1' ? new P2P({ edition, internet: !!hubUrl() }) : null;   // experimental: ?mp=1
+const lobby = p2p ? new Lobby(p2p, { edition }) : null;
 window.__p2p = p2p;
-panels.host = menuHost(storage, p2p);
+panels.host = menuHost(storage, p2p, { edition, lobby, session, startedOff: String(params.disabledAddons ?? '').split(',').filter(Boolean).sort().join(',') });
 // Guest threads: workers ask the page to start them (a blocked worker cannot start one itself). Each thread
 // worker announces 'thread-ready' and then receives its init data; it may ask for further threads in turn.
 const threads = new Map();
@@ -102,7 +132,7 @@ panels.input = (ev, frame) => input.handle(ev, frame);
 worker.onmessage = (e) => {
   const m = e.data;
   if (threadRequest(m)) return;
-  if (m.type === 'perf') { perfHud(m); } else if (m.type === 'audio-memory') { audio.setMemory(m.memory); } else if (m.type === 'cursor') { input.cursor(m.hidden); } else if (m.type === 'frame') {
+  if (m.type === 'perf') { perfHud(m); } else if (m.type === 'voice') { if (m.on) voice.start(); else voice.stop(); } else if (m.type === 'audio-memory') { audio.setMemory(m.memory); } else if (m.type === 'cursor') { input.cursor(m.hidden); } else if (m.type === 'frame') {
     const w = m.w, h = m.h;
     input.w = w; input.h = h;
     if (ctx && (canvas.width !== w || canvas.height !== h)) { canvas.width = w; canvas.height = h; }
@@ -110,7 +140,7 @@ worker.onmessage = (e) => {
     if (m.px) ctx.putImageData(new ImageData(new Uint8ClampedArray(m.px), w, h), 0, 0);
     panels.layout(m.html ?? [], w, h);
     if (m.gpu) gpuBytes = { ...m.gpu, live: m.live, stats: m.stats, byFormat: m.byFormat };
-    if (++frames === 1) { status.textContent = ''; document.title = "Garry's Mod"; }
+    if (++frames === 1) { status.textContent = ''; document.title = "Garry's Web"; }
   } else if (m.type === 'html') {
     panels.handle(m.m);
   } else if (m.type === 'status') {
@@ -125,8 +155,10 @@ worker.onmessage = (e) => {
 };
 worker.onerror = (e) => { status.textContent = `Worker failed: ${e.message}`; console.error(e); };
 let gpuBytes = null;
-worker.postMessage({ type: 'boot', env: params, netRings: p2p?.rings, cmdline: params.cmd ?? '', htmlRing, inputRing, audioRing, overlayBuffer: storage.buffer, saved: preferences.saved, renderPort }, renderPort ? [renderPort] : []);
+worker.postMessage({ type: 'boot', env: params, netRings: p2p?.rings, micRing, cmdline: params.cmd ?? '', htmlRing, inputRing, audioRing, overlayBuffer: storage.buffer, saved: preferences.saved, renderPort }, renderPort ? [renderPort] : []);
 window.__frames = () => frames;
+// Diagnostics: a file the game wrote (e.g. a con_logfile), read from the overlay even while the engine keeps it open.
+window.__readGameFile = async (p) => { const b = await storage.request('read-file', { path: '/overlay/garrysmod/' + p }); return b ? new TextDecoder().decode(b) : null; };
 window.__gpu = () => gpuBytes;
 // Test hook: what each HTML panel is showing and where.
 window.__panels = () => [...panels.panels.values()].map((p) => ({ id: p.id, url: p.url, loaded: !!p.loaded, size: [p.w, p.h], style: p.frame.style.cssText, base: p.frame.contentDocument?.baseURI, bases: [...(p.frame.contentDocument?.querySelectorAll('base') ?? [])].map(b => b.getAttribute('href')) }));

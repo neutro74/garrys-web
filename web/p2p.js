@@ -71,7 +71,10 @@ export class P2P {
     this.role = 'host'; this.setIp(HOST_IP);
     let ip = HOST_IP + 1; while (this.peers.has(ip) || this.pending.has(ip)) ip++;
     if ((ip & 255) > 250) throw Error('Too many players.');
-    const pc = this.connection(), ch = pc.createDataChannel('gw', { ordered: false, maxRetransmits: 0 });
+    // Reliable but unordered: real UDP would lose some of the bursts of split packets a server sends a joining client (its
+    // Lua and string tables), and the engine's own recovery stalls the join; SCTP retransmits instead, and unordered
+    // delivery keeps one late packet from holding up the rest.
+    const pc = this.connection(), ch = pc.createDataChannel('gw', { ordered: false });
     this.pending.set(ip, { pc, ch }); this.attach(pc, ch, ip);
     await pc.setLocalDescription(await pc.createOffer()); await gathered(pc);
     this.changed();

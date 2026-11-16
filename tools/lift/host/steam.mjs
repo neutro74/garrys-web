@@ -13,6 +13,11 @@ import { env as ENV } from './platform.mjs';
 const STRICT = !!ENV.STEAM_STRICT;
 const DEBUG = !!ENV.STEAM_DEBUG;
 
+// Each browser has its own SteamID and name (web/main.js keeps them in localStorage), so players in a peer-to-peer game are
+// distinct: a client that shares the server's ID would be taken for the host. Individual accounts: 76561197960265728 + account id.
+const BASE_ID = 76561197960265728n;
+const ACCOUNT = /^\d{1,10}$/.test(String(ENV.steamid ?? '')) ? BigInt(ENV.steamid) & 0xffffffffn : 22202n;
+const PERSONA = String(ENV.name ?? '').replace(/[\u0000-\u001f"]/g, '').trim().slice(0, 31) || 'Player';
 export function steamState(g) {
   return g.steam ||= {
     pipe: 1,
@@ -28,7 +33,8 @@ export function steamState(g) {
     appId: 4000,
     personaName: 0,
     personaNameFriend: 0,
-    steamId: 76561197960287930n,
+    steamId: BASE_ID + (ACCOUNT || 22202n),
+    serverId: 0x0140000000000000n | (ACCOUNT || 22202n),   // anonymous game server
   };
 }
 
@@ -106,7 +112,7 @@ function serverMethod(ctx, st, index, args) {
       queueCallback(st, CB_GS_POLICY, new Uint8Array(4));
       return 0;
     case 8: return 1;                      // BLoggedOn
-    case 10: return st.steamId;            // GetSteamID
+    case 10: return st.serverId;           // GetSteamID
     case 25: return authTicket(g, args[0], args[1], args[2]);
     case 26: {                             // BeginAuthSession(ticket, cb, steamID): always OK, and say so
       const p = new Uint8Array(20), dv = new DataView(p.buffer);
@@ -117,6 +123,67 @@ function serverMethod(ctx, st, index, args) {
       return 0;                            // k_EBeginAuthSessionResultOK
     }
     case 29: return 0;                     // UserHasLicenseForApp: k_EUserHasLicenseResultHasLicense
+    default: return undefined;
+  }
+}
+
+// Voice chat through ISteamUser's voice calls. The page captures the microphone as 16 kHz mu-law frames (web/voice.js) into
+// g.micIn; "compressed" voice is those bytes after a 2-byte tag, and DecompressVoice turns them back into 16-bit PCM at the
+// rate the engine asks for. Every player runs this shim, so the format only has to agree with itself.
+const VOICE_RATE = 16000, VOICE_TAG = [0x47, 0x56], k_EVoiceResult = { OK: 0, NotInitialized: 1, NotRecording: 2, NoData: 3, BufferTooSmall: 4, DataCorrupted: 5 };
+const ULAW = new Int16Array(256).map((_, i) => { const u = ~i & 0xff, sign = u & 0x80, exp = (u >> 4) & 7, mant = u & 15; const x = (((mant << 3) + 132) << exp) - 132; return sign ? -x : x; });
+function voiceState(st) { return st.voice ||= { recording: false, pending: [], bytes: 0 }; }
+function drainMic(g, v) {
+  if (!g.micIn) return;
+  for (let f; (f = g.micIn.read());) if (v.recording) { v.pending.push(f.slice()); v.bytes += f.length; }
+  while (v.bytes > VOICE_RATE) v.bytes -= v.pending.shift().length;   // keep at most a second: voice is real time
+}
+function voiceMethod(g, st, index, args) {
+  const v = voiceState(st);
+  switch (index) {
+    case 7: v.recording = true; g.voiceCapture?.(true); g.log?.('[voice] recording'); return 0; // StartVoiceRecording
+    case 8: v.recording = false; v.pending = []; v.bytes = 0; g.voiceCapture?.(false); return 0; // StopVoiceRecording
+    case 9: {                                                                                     // GetAvailableVoice(pcbCompressed, pcbUncompressed, rate)
+      if (!g.micIn) return k_EVoiceResult.NotInitialized;
+      drainMic(g, v);
+      if (args[0]) g.u32(args[0], v.bytes ? v.bytes + 2 : 0);
+      if (args[1]) g.u32(args[1], 0);
+      return v.bytes ? k_EVoiceResult.OK : v.recording ? k_EVoiceResult.NoData : k_EVoiceResult.NotRecording;
+    }
+    case 10: {                                                                                    // GetVoice(bWantCompressed, pDest, cbDest, pnWritten, ...)
+      const dest = args[1], cap = args[2] >>> 0, written = args[3];
+      if (written) g.u32(written, 0);
+      if (!g.micIn) return k_EVoiceResult.NotInitialized;
+      drainMic(g, v);
+      if (!v.bytes) return v.recording ? k_EVoiceResult.NoData : k_EVoiceResult.NotRecording;
+      if (cap < 3) return k_EVoiceResult.BufferTooSmall;
+      g.u8.set(VOICE_TAG, dest);
+      let at = dest + 2, room = cap - 2;
+      while (room > 0 && v.pending.length) {
+        const f = v.pending[0], n = Math.min(room, f.length);
+        g.u8.set(f.subarray(0, n), at); at += n; room -= n; v.bytes -= n;
+        if (n === f.length) v.pending.shift(); else v.pending[0] = f.subarray(n);
+      }
+      if (written) g.u32(written, at - dest);
+      if (!v.sentLogged) { v.sentLogged = true; g.log?.(`[voice] sending (${at - dest} bytes in the first packet)`); }
+      return k_EVoiceResult.OK;
+    }
+    case 11: {                                                                                    // DecompressVoice(pSrc, cbSrc, pDest, cbDest, pnWritten, rate)
+      const src = args[0], cb = args[1] >>> 0, dest = args[2], cap = args[3] >>> 0, written = args[4], rate = (args[5] >>> 0) || VOICE_RATE;
+      if (cb < 2 || g.u8[src] !== VOICE_TAG[0] || g.u8[src + 1] !== VOICE_TAG[1]) { if (written) g.u32(written, 0); return k_EVoiceResult.DataCorrupted; }
+      const n = cb - 2, out = Math.floor((n * rate) / VOICE_RATE), need = out * 2;
+      if (written) g.u32(written, need);
+      if (cap < need) return k_EVoiceResult.BufferTooSmall;
+      if (!v.heardLogged) { v.heardLogged = true; g.log?.(`[voice] receiving (${n} bytes at ${rate} Hz)`); }
+      const step = VOICE_RATE / rate;
+      for (let i = 0; i < out; i++) {
+        const pos = i * step, j = Math.floor(pos), t = pos - j;
+        const a = ULAW[g.u8[src + 2 + j]], b = ULAW[g.u8[src + 2 + Math.min(n - 1, j + 1)]], s = Math.round(a + (b - a) * t);
+        g.u8[dest + i * 2] = s & 255; g.u8[dest + i * 2 + 1] = (s >> 8) & 255;
+      }
+      return k_EVoiceResult.OK;
+    }
+    case 12: return VOICE_RATE;                                                                   // GetVoiceOptimalSampleRate
     default: return undefined;
   }
 }
@@ -147,6 +214,7 @@ function steamMethod(ctx, version, index, args) {
     if (r !== undefined) return r;
   }
   if (version === 'SteamUser023') {
+    if (index >= 7 && index <= 12) return voiceMethod(g, st, index, args);
     switch (index) {
       case 0: return st.user;              // GetHSteamUser
       case 1: return 1;                    // BLoggedOn
@@ -183,7 +251,7 @@ function steamMethod(ctx, version, index, args) {
     switch (index) {
       case 0: return st.user;              // GetHSteamUser
       case 1: {                            // GetPersonaName
-        if (!st.personaName) st.personaName = g.cstr('Player');
+        if (!st.personaName) st.personaName = g.cstr(PERSONA);
         return st.personaName;
       }
       case 2: return 0;                    // SetPersonaName (async handle)
@@ -200,7 +268,7 @@ function steamMethod(ctx, version, index, args) {
       case 10: return 0;                   // GetFriendPersonaNameHistory
       case 11: return -1;                  // GetFriendSteamLevel
       case 12:                             // GetPlayerNickname
-        if (!st.personaName) st.personaName = g.cstr('Player');
+        if (!st.personaName) st.personaName = g.cstr(PERSONA);
         return st.personaName;
       case 13: return 0;                   // GetFriendsGroupCount
       case 14: return 0;                   // GetFriendsGroupIDByIndex
@@ -554,7 +622,7 @@ export function installSteam(SHIMS, DYNAMIC_SHIMS = []) {
   S('SteamGameServer_Init', 5, () => 1);
   S('SteamGameServer_InitSafe', 5, () => 1);
   S('SteamGameServer_BSecure', 0, () => 0);
-  S('SteamGameServer_GetSteamID', 0, function () { return steamState(this.g).steamId; });
+  S('SteamGameServer_GetSteamID', 0, function () { return steamState(this.g).serverId; });
 
   // Interface accessors exposed by steam_api.dll itself (used by client.dll
   // and GameUI.dll through the accessor macros).

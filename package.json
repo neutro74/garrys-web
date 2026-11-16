@@ -1,7 +1,7 @@
 {
-  "name": "garrys-wasm",
+  "name": "garrys-web",
   "version": "1.0.0",
-  "description": "Garry's Mod in the browser: x86-to-WebAssembly lifter, browser runtime and D3D9 shims",
+  "description": "Garry's Web: Garry's Mod in the browser (x86-to-WebAssembly lifter, browser runtime, D3D9 shims, online hub)",
   "directories": {
     "doc": "docs"
   },

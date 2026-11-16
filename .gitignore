@@ -24,3 +24,4 @@ run/
 *.img
 *.db
 .claude/
+/ws-cache/

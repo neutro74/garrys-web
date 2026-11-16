@@ -39,10 +39,10 @@ export function packageCdn({input,out,have}){
  fs.rmSync(path.join(out,'.game-index.tmp'),{force:true});
  // Entry pages: the worker must be package-root scoped, so web/index.html registers it before booting main.js.
  copy(path.join(repo,'web/cdn-sw.js'),path.join(out,'cdn-sw.js'));copy(path.join(repo,'web/cdn-isolation.js'),path.join(out,'web/cdn-isolation.js'));
- const page=fs.readFileSync(path.join(repo,'web/index.html'),'utf8').replace('<meta charset="utf-8">','<meta charset="utf-8">\n<link rel="icon" href="../favicon.ico">').replace('<link rel="stylesheet" href="/web/launcher.css">','<link rel="stylesheet" href="launcher.css">').replace('<script type="module" src="/web/launcher.js"></script>',
+ const page=fs.readFileSync(path.join(repo,'web/index.html'),'utf8').replaceAll('"/web/brand/','"brand/').replace('<link rel="stylesheet" href="/web/launcher.css">','<link rel="stylesheet" href="launcher.css">').replace('<script type="module" src="/web/launcher.js"></script>',
   `<script type="module">import {ensureCdnIsolation} from './cdn-isolation.js';\nif(await ensureCdnIsolation()){const {MODULES}=await import('./modules.js');navigator.serviceWorker.controller?.postMessage({type:'prefetch',prefixes:['web/','tools/','runtime/','ports/',...MODULES.map(m=>'out/'+m+'-thread.'),'out/'],warm:true,workers:navigator.hardwareConcurrency<=2?3:8});await import('./launcher.js');}else document.getElementById('status').textContent='Cross-origin isolation is unavailable (service workers blocked?). A hard reload (Ctrl+Shift+R) bypasses it: reload normally or reopen the link.';</script>`);
  fs.writeFileSync(path.join(out,'web/index.html'),page);
- fs.writeFileSync(path.join(out,'index.html'),'<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=web/index.html"><a href="web/index.html">Garry\'s Mod</a>');
+ fs.writeFileSync(path.join(out,'index.html'),'<!doctype html><meta charset="utf-8"><title>Garry\'s Web</title><link rel="icon" href="web/brand/favicon.ico"><meta http-equiv="refresh" content="0;url=web/index.html"><a href="web/index.html">Garry\'s Web</a>');
  // Chunks a boot-to-map run reads (tools/make-warm-list.mjs), by content hash and first-read order.
  const warmFile=path.join(repo,'tools/cdn-warm.json'),warm=[];
  if(fs.existsSync(warmFile))for(const [rel,c] of JSON.parse(fs.readFileSync(warmFile,'utf8')))if(files[rel]?.chunks[c])warm.push(files[rel].chunks[c]);

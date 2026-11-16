@@ -35,15 +35,27 @@ function pump(g) {
     deliver(st, { ip: dv.getUint32(1) >>> 0, port: dv.getUint16(5) }, dv.getUint32(7) >>> 0, dv.getUint16(11), f.subarray(13));
   }
 }
+// GUEST_DEBUG_NET=1: connectionless packets (the connect handshake: q challenge request, A challenge, k connect, B accept,
+// 9 reject, T/U/V queries) and every dropped datagram are logged with addresses.
+const kind = (b) => (b.length >= 5 && b[0] === 255 && b[1] === 255 && b[2] === 255 && b[3] === 255 ? `'${String.fromCharCode(b[4])}'` : b.length >= 4 && b[0] === 0xfe && b[1] === 0xff ? 'split' : 'netchan');
+function trace(st, what, from, toIp, toPort, bytes) {
+  if (!st.dbg || !st.log) return;
+  const k = kind(bytes);
+  if (k === 'netchan' && what !== 'DROP') { st.netchan = (st.netchan ?? 0) + 1; if (st.netchan % 200) return; }
+  st.log(`[net] ${what} ${ipStr(from.ip)}:${from.port} -> ${ipStr(toIp)}:${toPort} ${k} ${bytes.length}b${k === 'netchan' && what !== 'DROP' ? ` (#${st.netchan})` : ''}`);
+}
 function deliver(st, from, dstIp, dstPort, bytes) {
   let hit = false;
   for (const s of st.sockets.values()) {
     if (s.type !== 2 || !s.bound || s.bound.port !== dstPort) continue;
-    if (s.bound.ip && s.bound.ip !== dstIp && !isBroadcast(dstIp)) continue;
+    // A socket bound to this machine's address keeps receiving after pairing changes that address (the engine binds at
+    // startup, before a joiner is given 10.77.0.N), so "this machine" matches whatever the address is now.
+    if (s.bound.ip && s.bound.ip !== dstIp && !isBroadcast(dstIp) && !(s.bound.ip !== LOOPBACK && dstIp === st.myIp)) continue;
     if (s.queue.length < 512) s.queue.push({ from, bytes: bytes.slice() });
     hit = true;
   }
-  if (hit) st.stats.received++; else st.stats.dropped++;
+  if (hit) { st.stats.received++; trace(st, 'rx', from, dstIp, dstPort, bytes); }
+  else { st.stats.dropped++; trace(st, 'DROP', from, dstIp, dstPort, bytes); if (st.dbg && st.log) st.log(`[net]   bound: ${[...st.sockets.values()].filter((x) => x.bound).map((x) => `${ipStr(x.bound.ip)}:${x.bound.port}`).join(' ')}`); }
 }
 function sendOut(g, srcIp, srcPort, dstIp, dstPort, bytes) {
   if (!g.netOut) return;
@@ -75,6 +87,8 @@ function sendDatagram(g, s, bytes, to) {
   if (!s.bound) bindSocket(g, s, 0, 0);
   const srcIp = isLoopback(to.ip) ? LOOPBACK : st.myIp;
   st.stats.sent++;
+  st.log ??= g.log?.bind(g);
+  trace(st, 'tx', { ip: isLoopback(to.ip) ? LOOPBACK : st.myIp, port: s.bound.port }, to.ip, to.port, bytes);
   if (isLoopback(to.ip) || to.ip === st.myIp) deliver(st, { ip: srcIp, port: s.bound.port }, to.ip, to.port, bytes);
   else sendOut(g, st.myIp, s.bound.port, to.ip, to.port, bytes);
 }
@@ -213,7 +227,7 @@ export function installWinsock(SHIMS) {
   });
   // hostent for the machine itself, localhost and dotted addresses; any other name does not resolve.
   WS('gethostbyname', 1, function (namePtr) {
-    const g = this.g, st = net(g), name = g.readStr(namePtr).toLowerCase();
+    const g = this.g, st = net(g), name = g.readStr(namePtr).toLowerCase().replace(/^"(.*)"$/, '$1');
     let ip = null;
     if (name === 'gamebox' || name === '') ip = st.myIp; else if (name === 'localhost') ip = LOOPBACK;
     else { const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(name); if (m) ip = (((+m[1] << 24) | (+m[2] << 16) | (+m[3] << 8) | +m[4]) >>> 0); }
@@ -230,6 +244,32 @@ export function installWinsock(SHIMS) {
     for (let i = 0; i < 7; i++) g.u8[h + 48 + i] = 'gamebox'.charCodeAt(i);
     return h;
   });
+  // getaddrinfo: the engine resolves every address with it (connect 10.77.0.1 included). Same names as gethostbyname; the result
+  // is one ADDRINFOA (32 bytes on x86) followed by its sockaddr_in, in one heap block that freeaddrinfo releases.
+  WS('getaddrinfo', 4, function (nodePtr, servicePtr, hints, out) {
+    // The engine passes connect's argument as typed; RunConsoleCommand("connect", ip) arrives quoted, so quotes are dropped.
+    const g = this.g, st = net(g), name = nodePtr ? g.readStr(nodePtr).toLowerCase().replace(/^"(.*)"$/, '$1') : null;
+    if (st.dbg) g.log?.(`[net] getaddrinfo(${name}, ${servicePtr ? g.readStr(servicePtr) : null}, hints ${hints ? [0, 4, 8, 12].map((o) => g.dv.getInt32(hints + o, true)).join('/') : '-'})`);
+    const flags = hints ? g.dv.getInt32(hints, true) : 0;
+    let ip = null;
+    if (name === null) ip = flags & 1 ? 0 : LOOPBACK;          // AI_PASSIVE: any address, else loopback
+    else if (name === 'gamebox' || name === '') ip = st.myIp; else if (name === 'localhost') ip = LOOPBACK;
+    else { const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(name); if (m && m.slice(1).every((x) => +x < 256)) ip = (((+m[1] << 24) | (+m[2] << 16) | (+m[3] << 8) | +m[4]) >>> 0); }
+    if (ip === null) { st.err = 11001; return 11001; }       // WSAHOST_NOT_FOUND
+    const port = servicePtr ? (parseInt(g.readStr(servicePtr), 10) || 0) & 0xffff : 0;
+    const a = g.alloc(48);
+    g.u8.fill(0, a, a + 48);
+    g.dv.setInt32(a + 4, 2, true);                           // ai_family AF_INET
+    if (hints) { g.dv.setInt32(a + 8, g.dv.getInt32(hints + 8, true), true); g.dv.setInt32(a + 12, g.dv.getInt32(hints + 12, true), true); }
+    g.dv.setUint32(a + 16, 16, true);                        // ai_addrlen
+    g.dv.setUint32(a + 24, a + 32, true);                    // ai_addr
+    g.dv.setUint16(a + 32, 2, true);                         // sin_family
+    g.dv.setUint16(a + 34, port, false);                     // sin_port, network order
+    g.dv.setUint32(a + 36, ip, false);                       // sin_addr, network order
+    g.dv.setUint32(out, a, true);
+    return 0;
+  });
+  WS('freeaddrinfo', 1, function (p) { if (p) try { this.g.free(p); } catch { /* not ours */ } return 0; });
   SHIMS['ws2_32.dll!WSAIoctl'] = { arity: 9, pop: 36, fn: function () { return 0; } };
   SHIMS['ws2_32.dll!WSAGetLastError'] = { arity: 0, pop: 0, fn: function () { return net(this.g).err; } };
   SHIMS['ws2_32.dll!WSASetLastError'] = { arity: 1, pop: 4, fn: function (e) { net(this.g).err = e | 0; return 0; } };

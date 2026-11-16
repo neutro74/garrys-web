@@ -1,0 +1,28 @@
+[Unit]
+Description=Garry's Mod browser hub (chat, lobbies, pairing)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=gmodhub
+ExecStart=/usr/bin/node /opt/gmod-hub/hub.mjs
+Environment=PORT=8787 HOST=0.0.0.0 TRUST_PROXY=1
+Environment=WS_CACHE=/var/lib/gmod-hub DEPOT_DOWNLOADER=/opt/depotdownloader/DepotDownloader HOME=/var/lib/gmod-hub DOTNET_CLI_TELEMETRY_OPTOUT=1
+# STEAM_KEY=... (Workshop browsing) lives here, readable by root only
+EnvironmentFile=-/etc/gmod-hub.env
+StateDirectory=gmod-hub
+WorkingDirectory=/var/lib/gmod-hub
+Restart=always
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

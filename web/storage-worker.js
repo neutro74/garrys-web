@@ -1,7 +1,7 @@
 // Owns all writable file identities and persists closed/flushed files in this origin's OPFS.
 import {createFs,seedOverlay,path} from '../tools/lift/host/webfs.mjs';
 import {serveOverlayRpc} from '../tools/lift/host/overlay-rpc.mjs';
-import {readGma,addonPath} from '../ports/gmod/compat/addons.mjs';
+import {readGma,readGmaHeader,addonPath} from '../ports/gmod/compat/addons.mjs';
 let volume,store,root,ctl;const dirty=new Map();
 // Writes made here (not through the RPC) must still invalidate the guests' cached metadata (overlay-rpc.mjs ctl[3]).
 const changed=()=>{if(ctl)Atomics.add(ctl,3,1);};
@@ -33,21 +33,65 @@ async function writeDirty(){
 }
 function snapshot(n=store.root,p='',out=[]){for(const [name,c] of n.children??[]){const key=p+'/'+name;if(c.dir){if(persistent(key))out.push([key,null]);snapshot(c,key,out);}else if(persistent(key))out.push([key,c.data.slice(0,c.size)]);}return out;}
 function safePath(p){if(typeof p!=='string'||!persistent(p)||p.split('/').some(c=>c==='..'||c==='.')||p.includes('\\')||p.includes('\0'))throw Error('Invalid backup path');return p;}
+// ---- Addon library ----
+// Addon files live in OPFS 'garrys-wasm-library' (never loaded into memory). The ones chosen for this launch (the page passes
+// their names) appear read-only in garrysmod/addons/ and are read in place through sync access handles, so a 1 GB addon costs
+// no RAM. Everything else in the overlay is unchanged.
+const LIB='/overlay/garrysmod/addons',lib=new Map(),libFds=new Map();let libDir,nextLibFd=1<<24;
+const libName=p=>{if(typeof p!=='string'||!p.startsWith(LIB+'/'))return null;const n=p.slice(LIB.length+1);return lib.has(n)?n:null;};
+const roErr=p=>Object.assign(Error(`EROFS: read-only addon, ${p}`),{code:'EROFS'});
+async function libOpen(name){if(lib.has(name))return;const fh=await libDir.getFileHandle(name);const handle=await fh.createSyncAccessHandle();lib.set(name,{handle,size:handle.getSize()});changed();}
+function libClose(name){const e=lib.get(name);if(!e)return;try{e.handle.close();}catch{}lib.delete(name);for(const [fd,n] of libFds)if(n===name)libFds.delete(fd);changed();}
+function served(fs){return {...Object.fromEntries(['existsSync','statSync','realpathSync','readdirSync','mkdirSync','openSync','closeSync','fstatSync','readSync','writeSync','ftruncateSync','fsyncSync','unlinkSync','rmSync'].map(k=>[k,fs[k].bind(fs)])),
+ existsSync:p=>!!libName(p)||fs.existsSync(p),
+ statSync:p=>{const n=libName(p);return n?{dir:false,size:lib.get(n).size,mtimeMs:0}:fs.statSync(p);},
+ realpathSync:p=>libName(p)?p:fs.realpathSync(p),
+ readdirSync:p=>{const base=fs.existsSync(p)?fs.readdirSync(p):[];return p===LIB?[...new Set([...base,...lib.keys()])]:base;},
+ openSync:(p,flags)=>{const n=libName(p);if(!n)return fs.openSync(p,flags);if(flags!==undefined&&flags!=='r'&&flags!==0)throw roErr(p);const fd=nextLibFd++;libFds.set(fd,n);return fd;},
+ closeSync:fd=>{if(libFds.delete(fd))return;return fs.closeSync(fd);},
+ fstatSync:fd=>{const n=libFds.get(fd);return n?{dir:false,size:lib.get(n).size,mtimeMs:0}:fs.fstatSync(fd);},
+ readSync:(fd,buffer,offset,length,position)=>{const n=libFds.get(fd);if(!n)return fs.readSync(fd,buffer,offset,length,position);
+  const tmp=new Uint8Array(length),got=lib.get(n).handle.read(tmp,{at:position});buffer.set(tmp.subarray(0,got),offset);return got;},
+ writeSync:(fd,...a)=>{if(libFds.has(fd))throw roErr('');return fs.writeSync(fd,...a);},
+ unlinkSync:p=>{if(libName(p))throw roErr(p);return fs.unlinkSync(p);},
+ rmSync:(p,o)=>{if(libName(p))throw roErr(p);return fs.rmSync(p,o);},
+};}
+// .gma files that older versions kept in the overlay (in memory) move into the library once; the page records them.
+async function migrateAddons(){
+ const moved=[];if(!volume.existsSync(LIB))return moved;
+ for(const name of volume.readdirSync(LIB)){if(!name.endsWith('.gma')||!volume.statSync(LIB+'/'+name).size)continue;
+  const bytes=volume.readFileSync(LIB+'/'+name),w=await(await libDir.getFileHandle(name,{create:true})).createWritable();await w.write(bytes);await w.close();
+  volume.rmSync(LIB+'/'+name,{force:true});moved.push({name,size:bytes.length});}
+ if(moved.length){changed();await commit();}
+ return moved;
+}
 self.onmessage=async({data:m})=>{
  try {
   if(m.type==='init'){
    ctl=new Int32Array(m.buffer,0,16);root=await(await navigator.storage.getDirectory()).getDirectoryHandle('garrys-wasm',{create:true});
    const mounted=createFs({index:{},reader:()=>0,onChange:(p,n)=>{if(persistent(p))dirty.set(p,n);}});volume=mounted.fs;store=mounted.overlay;
    seedOverlay(store,await load(root));
-   postMessage({type:'ready'});serveOverlayRpc(m.buffer,volume,commit).catch(e=>postMessage({type:'fatal',error:e.message}));return;
+   libDir=await(await navigator.storage.getDirectory()).getDirectoryHandle('garrys-wasm-library',{create:true});
+   const migrated=await migrateAddons().catch(e=>{console.warn('[storage] addon migration:',e.message);return [];});
+   volume.mkdirSync(LIB,{recursive:true});
+   for(const name of m.library??[])await libOpen(name).catch(e=>console.warn(`[storage] addon ${name}:`,e.message));
+   postMessage({type:'ready',migrated,library:[...lib.keys()]});serveOverlayRpc(m.buffer,served(volume),commit).catch(e=>postMessage({type:'fatal',error:e.message}));return;
   }
   let result;
   if(m.type==='preferences')result={saved:volume.existsSync('/overlay/garrysmod/cfg/video.txt') || volume.existsSync('/overlay/garrysmod/cfg/config.cfg')};
   else if(m.type==='list')result=volume.existsSync('/overlay/garrysmod/addons')?volume.readdirSync('/overlay/garrysmod/addons'):[];
+  else if(m.type==='read-file'){const p=String(m.path);if(!persistent(p))throw Error('Not a saved file');result=volume.existsSync(p)?volume.readFileSync(p):null;}
+  else if(m.type==='library-add'){await libOpen(String(m.name));result=[...lib.keys()];}
+  else if(m.type==='library-remove'){const name=String(m.name);if(name.includes('/'))throw Error('Invalid addon name');libClose(name);await libDir.removeEntry(name).catch(e=>{if(e.name!=='NotFoundError')throw e;});result=[...lib.keys()];}
+  else if(m.type==='library-files'){result=[];for await(const [name,h] of libDir.entries())if(h.kind==='file')result.push({name,size:(await h.getFile()).size,active:lib.has(name)});}
+  else if(m.type==='library-info'){const name=String(m.name);const e=lib.get(name);let bytes;
+   if(e){const n=Math.min(e.size,1<<20);bytes=new Uint8Array(n);e.handle.read(bytes,{at:0});}else bytes=new Uint8Array(await(await(await libDir.getFileHandle(name)).getFile()).slice(0,1<<20).arrayBuffer());
+   const g=readGmaHeader(bytes);let type='',description='';try{const d=JSON.parse(g.description);type=String(d.type??'').toLowerCase();description=String(d.description??'');}catch{description=g.description;}
+   result={title:g.name,type,description};}
   else if(m.type==='list-addons'){
    // Installed .gma files with their titles (for the in-game Addons page).
    const dir='/overlay/garrysmod/addons';result=[];
-   if(volume.existsSync(dir))for(const file of volume.readdirSync(dir)){if(!file.endsWith('.gma'))continue;const bytes=volume.readFileSync(dir+'/'+file);let title=file;try{title=readGma(bytes,{strictArchiveCrc:false}).name||file;}catch{}result.push({file,title,size:bytes.length});}
+   if(volume.existsSync(dir))for(const file of volume.readdirSync(dir)){if(!file.endsWith('.gma'))continue;const bytes=volume.readFileSync(dir+'/'+file);let title=file,type='',description='';try{const g=readGma(bytes,{strictArchiveCrc:false});title=g.name||file;try{const d=JSON.parse(g.description);type=String(d.type??'').toLowerCase();description=String(d.description??'');}catch{description=g.description;}}catch{}result.push({file,title,size:bytes.length,type,description});}
   }
   else if(m.type==='import-addon'){
    const name=addonPath(m.name);if(name.includes('/')||!name.endsWith('.gma'))throw Error('Choose a .gma addon');

@@ -73,3 +73,32 @@ test('gethostbyname resolves the machine and dotted addresses only', () => {
   g.u8.set([...'nowhere.example\0'].map((c) => c.charCodeAt(0)), 50);
   assert.equal(call('gethostbyname', 50), 0);
 });
+
+test('getaddrinfo resolves dotted addresses with the service port; names it cannot know fail', () => {
+  const { g, call } = guest();
+  g.u8.set(new TextEncoder().encode('10.77.0.1\0'), 100); g.u8.set(new TextEncoder().encode('27015\0'), 120);
+  assert.equal(call('getaddrinfo', 100, 120, 0, 140), 0);
+  const ai = g.dv.getUint32(140, true), sa = g.dv.getUint32(ai + 24, true);
+  assert.equal(g.dv.getInt32(ai + 4, true), 2); assert.equal(g.dv.getUint32(ai + 16, true), 16);
+  assert.equal(g.dv.getUint16(sa, true), 2); assert.equal(g.dv.getUint16(sa + 2), 27015); assert.equal(g.dv.getUint32(sa + 4), 0x0a4d0001);
+  g.u8.set(new TextEncoder().encode('example.com\0'), 100);
+  assert.equal(call('getaddrinfo', 100, 0, 0, 140), 11001);
+});
+
+test('getaddrinfo accepts a quoted address (RunConsoleCommand quotes connect\'s argument)', () => {
+  const { g, call } = guest();
+  g.u8.set(new TextEncoder().encode('"10.77.0.1"\0'), 100);
+  assert.equal(call('getaddrinfo', 100, 0, 0, 140), 0);
+  assert.equal(g.dv.getUint32(g.dv.getUint32(g.dv.getUint32(140, true) + 24, true) + 4), 0x0a4d0001);
+});
+
+test('a socket bound to the old machine address still receives after the address changes (pairing)', () => {
+  const { g, call } = guest();
+  const srv = call('socket', 2, 2, 17);
+  addr(g, 100, 0x0a4d0001, 27005); assert.equal(call('bind', srv, 100, 16), 0);   // bound while this machine was 10.77.0.1
+  g.net.myIp = 0x0a4d0002;                                                          // then paired as 10.77.0.2
+  const cli = call('socket', 2, 2, 17);
+  addr(g, 120, 0x0a4d0002, 27005); g.u8.set([7], 200);
+  call('sendto', cli, 200, 1, 0, 120, 16);
+  assert.equal(call('recvfrom', srv, 300, 64, 0, 0, 0), 1);
+});

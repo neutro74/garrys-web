@@ -50,6 +50,8 @@ if (!inlineRender) {
 // The launcher (web/launcher.js) adds the chosen edition and graphics size; URL parameters still work for tests.
 const params = { ...Object.fromEntries(new URLSearchParams(location.search)), ...(globalThis.__launch ?? {}) };
 // First-run engine size: the window in CSS pixels (even, at most 1920x1080), so 2D is drawn 1:1 instead of stretched.
+// Multiplayer (server browser, hosting, joining) is on unless ?mp=0.
+params.mp = params.mp === '0' ? '0' : '1';
 params.win = `${Math.min(1920, innerWidth & ~1)}x${Math.min(1080, innerHeight & ~1)}`;
 // This browser's player identity: a random Steam account id (kept, so saves and bans stay with the player) and the name
 // chosen in the launcher's chat, used in game (steam.mjs).
@@ -110,9 +112,10 @@ const edition = params.edition === 'extended' ? 'extended' : 'base';
 // With a hub, games are found and paired through it (web/lobby.js) and may cross the internet, so WebRTC also asks one public
 // STUN server for this browser's public address; without a hub, pairing is by invite codes on the local network only.
 const identity = params.steamid ? { steamid: String(76561197960265728n + BigInt(params.steamid)), name: String(params.name ?? 'Player') } : null;
-const p2p = params.mp === '1' ? new P2P({ edition, internet: !!hubUrl(), identity }) : null;   // experimental: ?mp=1
+const p2p = params.mp === '1' ? new P2P({ edition, internet: !!hubUrl(), identity }) : null;
 const lobby = p2p ? new Lobby(p2p, { edition }) : null;
 window.__p2p = p2p;
+window.__lobby = lobby;
 panels.host = menuHost(storage, p2p, { edition, lobby, session, startedOff: String(params.disabledAddons ?? '').split(',').filter(Boolean).sort().join(',') });
 // Guest threads: workers ask the page to start them (a blocked worker cannot start one itself). Each thread
 // worker announces 'thread-ready' and then receives its init data; it may ask for further threads in turn.
@@ -152,6 +155,11 @@ worker.onmessage = (e) => {
     console.log(`[status] ${m.text}`);
   } else if (m.type === 'log') {
     console.log(m.text);
+  } else if (m.type === 'quit') {
+    // The game was quit: back to the launcher (the page without launch parameters; saved files are already in OPFS).
+    try { sessionStorage.removeItem('garrys-wasm.resume'); } catch { /* storage blocked */ }
+    status.textContent = 'Returning to the launcher...';
+    Promise.race([storage.request('flush').catch(() => {}), new Promise((r) => setTimeout(r, 3000))]).then(() => location.replace(location.pathname));
   } else if (m.type === 'error') {
     status.textContent = m.text;
     console.error(m.text);

@@ -98,7 +98,8 @@ self.onmessage=async({data:m})=>{
    const bytes=new Uint8Array(m.bytes);readGma(bytes);volume.mkdirSync('/overlay/garrysmod/addons',{recursive:true});volume.writeFileSync('/overlay/garrysmod/addons/'+name,bytes);changed();await commit();result=name;
   }else if(m.type==='remove-addon'){
    const name=addonPath(m.name);if(name.includes('/'))throw Error('Invalid addon name');volume.rmSync('/overlay/garrysmod/addons/'+name,{recursive:true,force:true});changed();await commit();
-  }else if(m.type==='export'){await commit();result=snapshot();}
+  }else if(m.type==='flush'){await commit();result=true;
+}else if(m.type==='export'){await commit();result=snapshot();}
   else if(m.type==='restore'){
    // Validate the entire archive before writing any part of it. Merge preserves unrelated saves.
    if(!Array.isArray(m.entries)||m.entries.length>100000)throw Error('Invalid backup');

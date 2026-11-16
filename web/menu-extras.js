@@ -231,100 +231,169 @@ function savesSidebar(page, ul) {
   if (anchor) anchor.style.display = 'none';
 }
 
-// Multiplayer page: peer-to-peer play (web/p2p.js), found through the hub (web/lobby.js) or paired by invite codes.
-// Online: "Host this game online" lists the running game; other players with the same edition see it here and click to join
-// (the pages pair through the hub, then the game connects to the host). Invite codes still work without a hub, on a LAN.
-async function serversSidebar(page, ul) {
-  let p2pState;
-  try { p2pState = await host('p2p-status'); } catch { return; }
-  if (p2pState.disabled) return;   // experimental: only with ?mp=1
-  const status = note();
-  const connectWhenLinked = (check) => {
-    let tries = 0;
-    const t = setInterval(async () => {
-      const ok = await check().catch(() => false);
-      if (ok) { clearInterval(t); status.textContent = 'Linked. Connecting to the host…'; lua('RunConsoleCommand("connect","10.77.0.1")'); }
-      else if (++tries > 60) { clearInterval(t); status.textContent = 'The link to the host did not come up. Try again.'; }
-    }, 1000);
-  };
+// Multiplayer: GMod's own server browser, Start New Game and Join, with the browser's networking behind them.
+// The menu's Lua asks `serverlist.Query` / `PingServer` / `PlayerList` for servers; in this build those are answered here:
+//   - Garry's Web games: games other players started with Start New Game (Max Players above 1), listed through the hub
+//     (web/lobby.js). They get stand-in addresses 10.78.x.y; joining one pairs the two pages peer to peer (WebRTC), then
+//     connects to the host's virtual address 10.77.0.1.
+//   - Real Garry's Mod servers: Steam's server list for the game, fetched and pinged by the hub (hub/servers.mjs). Their game
+//     traffic goes through the hub's UDP relay (web/p2p.js), since a browser cannot send UDP.
+// Favourites and history are kept by the menu's Lua in data/garrysweb_servers.txt.
+const LUA_BRIDGE = `
+if not serverlist or not pnlMainMenu then return end
+GW = GW or { q = {}, n = 0, cb = {} }
+local function js(s) if IsValid(pnlMainMenu) then pnlMainMenu:Call(s) end end
+local FILE = "garrysweb_servers.txt"
+local function load() GW.saved = GW.saved or util.JSONToTable(file.Read(FILE, "DATA") or "") or { fav = {}, hist = {} } return GW.saved end
+local function save() file.Write(FILE, util.TableToJSON(GW.saved)) end
+local function list(t) local o = {} for k in pairs(t) do o[#o + 1] = k end return util.TableToJSON(o) end
+function serverlist.Query(data)
+  GW.n = GW.n + 1 GW.q[GW.n] = data
+  local s = load()
+  local extra = data.Type == "favorite" and list(s.fav) or data.Type == "history" and list(s.hist) or "[]"
+  js("window.__gwQuery && __gwQuery(" .. GW.n .. ", '" .. string.JavascriptSafe(data.Type or "internet") .. "', " .. extra .. ")")
+end
+function GW.Rows(id, json)
+  local d = GW.q[tonumber(id)] if not d then return end
+  for _, r in ipairs(util.JSONToTable(json) or {}) do
+    local ok, more
+    if r.failed then ok, more = pcall(d.CallbackFailed, r.address)
+    else ok, more = pcall(d.Callback, r.ping, r.name, r.desc, r.map, r.players, r.max, r.bots, r.pass, r.lastplayed or 0, r.address, r.gm, r.ws or "0", false, r.ver, r.ver, r.loc or "", r.gmc or "") end
+    if ok and more == false then GW.q[tonumber(id)] = nil return end
+  end
+end
+function GW.Done(id) local d = GW.q[tonumber(id)] GW.q[tonumber(id)] = nil if d and d.Finished then pcall(d.Finished) end end
+function serverlist.PingServer(addr, cb) GW.n = GW.n + 1 GW.cb[GW.n] = cb js("window.__gwPing && __gwPing(" .. GW.n .. ", '" .. string.JavascriptSafe(addr) .. "')") end
+function serverlist.PlayerList(addr, cb) GW.n = GW.n + 1 GW.cb[GW.n] = cb js("window.__gwPlayers && __gwPlayers(" .. GW.n .. ", '" .. string.JavascriptSafe(addr) .. "')") end
+function GW.Ping(id, json)
+  local cb = GW.cb[tonumber(id)] GW.cb[tonumber(id)] = nil if not cb then return end
+  local r = util.JSONToTable(json)
+  if not r then return pcall(cb) end
+  pcall(cb, r.ping, r.name, r.desc, r.map, r.players, r.max, r.bots, r.pass, 0, r.address, r.gm, r.ws or "0", false, r.ver, r.ver, r.loc or "", r.gmc or "")
+end
+function GW.Players(id, json) local cb = GW.cb[tonumber(id)] GW.cb[tonumber(id)] = nil if cb then pcall(cb, util.JSONToTable(json) or {}) end end
+function serverlist.IsServerFavorite(addr) return load().fav[addr] == true end
+function serverlist.AddServerToFavorites(addr) load().fav[addr] = true save() end
+function serverlist.RemoveServerFromFavorites(addr) load().fav[addr] = nil save() end
+GW.joinReal = GW.joinReal or JoinServer
+function JoinServer(addr)
+  addr = tostring(addr) load().hist[addr] = true save() GW.last = addr
+  if addr:sub(1, 6) == "10.78." then js("window.__gwJoin && __gwJoin('" .. string.JavascriptSafe(addr) .. "')") return end
+  if GW.joinReal then GW.joinReal(addr) else RunConsoleCommand("connect", addr) end
+end
+function serverlist.IsCurrentServerFavorite() return GW.last ~= nil and load().fav[GW.last] == true end
+function GW.Message(text, title) Derma_Message(text, title or "Multiplayer", "OK") end
+hook.Add("StartGame", "garrysweb", function() timer.Simple(0.5, function() js("window.__gwStarted && __gwStarted('" .. string.JavascriptSafe(engine.ActiveGamemode() or "") .. "', '" .. string.JavascriptSafe(GetConVarString("hostname") or "") .. "', " .. GetConVarNumber("sv_lan") .. ")") end) end)
+timer.Create("garrysweb_ingame", 2, 0, function() js("window.__gwInGame && __gwInGame(" .. tostring(IsInGame()) .. ")") end)
+`;
 
-  // ---- Online (hub) ----
-  const online = [], gamesHead = document.createElement('li'), games = [];
-  gamesHead.innerHTML = '<a class="notactive" style="pointer-events:none">Games online</a>';
-  const hostItem = item('Host this game online…', async (a) => {
-    try {
-      const st = await host('lobby-status');
-      if (st.hosting) { await host('lobby-unhost'); render(); return; }
-      const name = prompt('Name of your game (shown to other players):', `${st.me}'s game`);
-      if (name === null) return;
-      await host('lobby-host', { name, max: 8 });
-      status.textContent = 'Listed. Start a game with more than one player (Start New Game → Max Players) if you have not yet.';
-      render();
-    } catch (e) { status.textContent = e.message; }
-  });
-  let lastList = '';
-  async function render() {
-    let st;
-    try { st = await host('lobby-status'); } catch (e) { status.textContent = e.message; return; }
-    if (st.disabled) return;
-    hostItem.firstChild.textContent = st.hosting ? `Stop listing “${st.hosting.name}”` : 'Host this game online…';
-    const key = JSON.stringify(st.lobbies.map((l) => [l.id, l.name, l.players, l.max, l.map]));
-    if (key !== lastList) {
-      lastList = key;
-      for (const li of games.splice(0)) li.remove();
-      if (!st.lobbies.length) games.push(note(st.hub === 'online' ? 'No open games for this edition right now.' : 'Connecting to the game list…'));
-      for (const l of st.lobbies) {
-        const li = item(`${l.name}  (${l.players}/${l.max})`, async () => {
-          try { await host('lobby-join', { id: l.id }); status.textContent = `Asking ${l.hostName} to join…`; connectWhenLinked(() => host('lobby-linked')); } catch (e) { status.textContent = e.message; }
-        });
-        li.title = `Hosted by ${l.hostName}${l.map ? ' on ' + l.map : ''}. Click to join.`;
-        games.push(li);
-      }
-      gamesHead.after(...games);
-    }
-    if (st.note) status.textContent = st.note;
+async function serverBrowser() {
+  // Only the main menu document (menu.html, where the server browser lives); other game pages run in other Lua states.
+  if (window.__gwBridge || !window.lua?.Run || typeof window.AddServer !== 'function') return;
+  window.__gwBridge = true;
+  let p2p;
+  try { p2p = await host('p2p-status'); } catch { return; }
+  if (p2p.disabled) return;
+  host('lobby-status').catch(() => {});   // connects to the hub's game list early
+  const run = (fmt, ...args) => { try { window.lua?.Run(fmt, ...args.map(String)); } catch { /* not in engine */ } };
+  run(LUA_BRIDGE.replaceAll('%', '%%'));
+  const clean = (s) => String(s ?? '').replace(/[\u0000-\u001f\u007f]/g, '');
+  const ourVer = () => String(window.GMOD_VERSION_INT ?? '');
+  const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : '');
+  const message = (text, title) => run('GW.Message(%s, %s)', clean(text), clean(title ?? 'Multiplayer'));
+
+  // Garry's Web games get stable stand-in addresses for the browser's lists.
+  const fake = new Map(), byFake = new Map();
+  const addrOf = (id) => { if (!fake.has(id)) { const n = fake.size + 1, a = `10.78.${n >> 8}.${n & 255}:27015`; fake.set(id, a); byFake.set(a, id); } return fake.get(id); };
+  const lobbyRow = (l) => ({ ping: 30, name: clean(l.name), desc: cap(l.gamemode) || 'Sandbox', map: clean(l.map) || 'gm_flatgrass', players: l.players | 0, max: l.max | 0,
+    bots: 0, pass: false, address: addrOf(l.id), gm: clean(l.gamemode) || 'sandbox', ws: '0', ver: ourVer(), loc: '', gmc: 'other', lan: !!l.lan });
+
+  // Real servers from the hub, cached for half a minute. The ping shown is the hub's own trip to the server plus this
+  // browser's trip to the hub, which is what relayed traffic takes.
+  let cache = null, hubMs = 60;
+  async function realServers() {
+    if (cache && Date.now() - cache.at < 30e3) return cache.rows;
+    const t0 = performance.now();
+    const j = await host('server-list');
+    hubMs = Math.max(10, Math.round((performance.now() - t0) / 4));
+    const rows = j.servers.map(([address, name, map, players, max, bots, gm, ws, loc, gmc, ver, desc, pass, ping]) => ({
+      address, name: clean(name), map: clean(map), players, max, bots, gm: clean(gm) || 'unknown', ws: ws || '0', loc: clean(loc), gmc: clean(gmc) || 'none',
+      ver: String(ver).replace(/\D/g, ''), desc: clean(desc) || cap(gm), pass: !!pass, ping: ping ? ping + hubMs : 999 }));
+    cache = { at: Date.now(), rows };
+    return rows;
   }
-
-  // ---- Invite codes (no hub needed; same network) ----
-  const header = document.createElement('li');
-  header.innerHTML = '<a class="notactive" style="pointer-events:none">Invite codes (same network)</a>';
-  const field = (label, readonly = false) => {
-    const li = document.createElement('li'), ta = document.createElement('textarea');
-    li.className = 'wasm-note'; li.style.cssText = 'padding:2px 0 2px 8px;white-space:normal;font-size:11px;opacity:.9';
-    ta.rows = 3; ta.readOnly = readonly; ta.placeholder = label; ta.style.cssText = 'width:92%;font-size:10px;word-break:break-all;resize:none';
-    li.append(ta); return { li, ta };
-  };
-  const out = field('Your code appears here', true), reply = field('Paste the other player\'s code');
-  out.li.hidden = reply.li.hidden = true;
-  const show = (text) => { out.ta.value = text; out.li.hidden = !text; if (text) out.ta.select(); };
-  const invite = item('Invite a player…', async () => {
-    try { const r = await host('p2p-invite'); show(r.code); reply.li.hidden = false; reply.ta.placeholder = 'Paste their reply code, then press "Link player"'; status.textContent = `Send this code. They will be ${r.ip}.`; } catch (e) { status.textContent = e.message; }
-  });
-  const link = item('Link player (enter their reply)', async () => {
-    try { await host('p2p-finish', { code: reply.ta.value }); reply.ta.value = ''; status.textContent = 'Linked.'; } catch (e) { status.textContent = e.message; }
-  });
-  const join = item('Join with an invite…', async () => {
-    const code = reply.ta.value.trim();
-    reply.li.hidden = false;
-    if (!code) { reply.ta.placeholder = 'Paste the host\'s invite code here, then press this again'; status.textContent = 'Paste the invite code, then press Join again.'; return; }
+  async function lobbies() {
     try {
-      const r = await host('p2p-accept', { code }); reply.ta.value = ''; show(r); status.textContent = 'Send this reply code back to the host.';
-      connectWhenLinked(async () => { const st = await host('p2p-status'); return st.role === 'guest' && st.peers.length > 0; });
-    } catch (e) { status.textContent = e.message; }
-  });
-  const leave = item('Disconnect', async () => { try { await host('p2p-leave'); show(''); status.textContent = 'Disconnected.'; lua('RunConsoleCommand("disconnect")'); render(); } catch (e) { status.textContent = e.message; } });
+      for (let i = 0; ; i++) {      // the first list arrives a moment after the hub connects
+        const st = await host('lobby-status');
+        if (st.disabled) return [];
+        if (st.listed || i >= 20) return st.lobbies;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    } catch { return []; }
+  }
+  async function one(address) {
+    const id = byFake.get(address);
+    if (id) { const l = (await lobbies()).find((x) => x.id === id); return l ? lobbyRow(l) : null; }
+    const known = (await realServers().catch(() => [])).find((r) => r.address === address);
+    if (known) return known;
+    try {
+      const i = await host('server-info', { addr: address });
+      return { address, name: clean(i.name), map: clean(i.map), players: i.players, max: i.max, bots: i.bots, gm: 'unknown', ws: '0', ver: String(i.version).replace(/\D/g, ''),
+        desc: clean(i.game), pass: !!i.pass, ping: i.ping + hubMs, loc: '', gmc: 'none' };
+    } catch { return null; }
+  }
+  const send = (id, rows) => { for (let i = 0; i < rows.length; i += 250) run('GW.Rows(%s, %s)', id, JSON.stringify(rows.slice(i, i + 250))); };
 
-  let hub = null;
-  try { hub = await host('lobby-status'); } catch { /* no hub */ }
-  if (hub && !hub.disabled) online.push(document.createElement('li'), gamesHead, hostItem);
-  ul.append(...online, document.createElement('li'), header, invite, link, join, leave, out.li, reply.li, status);
-  if (hub && !hub.disabled) { render(); const t = setInterval(() => { if (!page.isConnected) clearInterval(t); else render(); }, 2000); }
+  window.__gwQuery = async (id, type, addrs) => {
+    try {
+      if (type === 'internet') {
+        send(id, (await lobbies()).filter((l) => !l.lan).map(lobbyRow));
+        send(id, await realServers().catch((e) => { message(e.message, 'Server list'); return []; }));
+      } else if (type === 'lan') send(id, (await lobbies()).filter((l) => l.lan).map(lobbyRow));
+      else if (addrs?.length) {
+        const rows = await Promise.all(addrs.map(async (a) => (await one(a)) ?? { failed: true, address: a }));
+        send(id, rows);
+      }
+    } finally { run('GW.Done(%s)', id); }
+  };
+  window.__gwPing = async (id, address) => { const r = await one(address).catch(() => null); run('GW.Ping(%s, %s)', id, r ? JSON.stringify(r) : ''); };
+  window.__gwPlayers = async (id, address) => {
+    let list = [];
+    if (!byFake.has(address)) list = await host('server-players', { addr: address }).catch(() => []);
+    run('GW.Players(%s, %s)', id, JSON.stringify(list.map((p) => ({ name: clean(p.name), score: p.score | 0, time: +p.time || 0 }))));
+  };
+  window.__gwJoin = async (address) => {
+    const id = byFake.get(address);
+    try {
+      await host('lobby-join', { id });
+      for (let i = 0; i < 40; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        if (await host('lobby-linked').catch(() => false)) { run('RunConsoleCommand("connect", "10.77.0.1")'); return; }
+        const st = await host('lobby-status').catch(() => null);
+        if (st && !st.joining) { message(st.note || 'The host did not answer.', "Couldn't join"); return; }
+      }
+      message('The connection to the host did not come up. The host may be behind a network that blocks it.', "Couldn't join");
+    } catch (e) { message(e.message, "Couldn't join"); }
+  };
+  // Start New Game with more than one player slot lists the game; "Local Server" keeps it to the same network.
+  let listed = false, starting = 0;
+  window.__gwStarted = (gamemode, hostname, svLan) => {
+    const root = window.angular?.element(document.body).injector?.().get('$rootScope');
+    const max = +(root?.MaxPlayers ?? 1);
+    if (max <= 1) { if (listed) { host('lobby-unhost').catch(() => {}); listed = false; } return; }
+    starting = Date.now();
+    host('lobby-host', { name: (hostname && hostname !== "Garry's Mod" ? clean(hostname) : '') || undefined, map: clean(root?.Map), gamemode: clean(gamemode), max, lan: svLan === 1 })
+      .then(() => { listed = true; }).catch((e) => message(e.message, 'Hosting'));
+  };
+  window.__gwInGame = (inGame) => { if (!inGame && listed && Date.now() - starting > 60e3) { listed = false; host('lobby-unhost').catch(() => {}); } };
 }
 
 const done = new WeakSet();
 function scan() {
   if (!window.__gmodHost) return;
-  for (const [ctrl, add] of [['ControllerAddons', addonsSidebar], ['ControllerSaves', savesSidebar], ['ControllerServers', serversSidebar]]) {
+  serverBrowser();
+  for (const [ctrl, add] of [['ControllerAddons', addonsSidebar], ['ControllerSaves', savesSidebar]]) {
     for (const page of document.querySelectorAll(`[ng-controller="${ctrl}"]`)) {
       const ul = page.querySelector('.options > ul');
       if (!ul || done.has(page)) continue;

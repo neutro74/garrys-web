@@ -7,7 +7,7 @@ import { Hub } from './hub.js';
 export class Lobby {
   constructor(p2p, { edition }) {
     this.p2p = p2p; this.edition = edition; this.hub = new Hub(); this.lobbies = []; this.hosting = null; this.joining = null; this.note = '';
-    this.hub.on('lobbies', (m) => { this.lobbies = m.lobbies.filter((l) => l.edition === edition && l.host !== this.hub.me?.id); });
+    this.hub.on('lobbies', (m) => { this.listed = true; this.lobbies = m.lobbies.filter((l) => l.edition === edition && l.host !== this.hub.me?.id); });
     this.hub.on('hosting', (m) => { if (this.hosting) this.hosting.id = m.id; });
     this.hub.on('signal', (m) => this.signal(m.from, m.data ?? {}).catch((e) => { this.note = e.message; }));
     this.hub.on('error', (m) => { this.note = m.error; });
@@ -18,13 +18,13 @@ export class Lobby {
   refresh() { if (this.hosting) this.hub.host({ ...this.hosting.info, players: 1 + this.p2p.status().peers.length }); }
   status() {
     return { hub: this.hub.state, me: this.hub.me?.name ?? this.hub.name, lobbies: this.lobbies, hosting: this.hosting && { ...this.hosting.info, id: this.hosting.id },
-      joining: this.joining && { id: this.joining.id, state: this.joining.state }, note: this.note, p2p: this.p2p.status() };
+      joining: this.joining && { id: this.joining.id, state: this.joining.state }, note: this.note, listed: !!this.listed, p2p: this.p2p.status() };
   }
-  host({ name, map, gamemode, max }) {
+  host({ name, map, gamemode, max, lan = false }) {
     if (!this.available) throw Error('No hub is set up, so games cannot be listed. Use invite codes instead.');
     if (this.p2p.status().role === 'guest') throw Error('Leave the game you joined before hosting.');
     this.connect();
-    this.hosting = { id: null, info: { name: String(name || `${this.hub.name}'s game`).slice(0, 48), map: String(map ?? ''), gamemode: String(gamemode ?? ''), edition: this.edition, max: max | 0 || 8, players: 1 } };
+    this.hosting = { id: null, info: { name: String(name || `${this.hub.name}'s game`).slice(0, 48), map: String(map ?? ''), gamemode: String(gamemode ?? ''), edition: this.edition, max: max | 0 || 8, players: 1, lan: !!lan } };
     this.hub.host(this.hosting.info);
     this.note = '';
     return this.status();

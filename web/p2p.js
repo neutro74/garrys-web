@@ -8,6 +8,7 @@
 // By default no STUN server is used, so connections work on the same network (LAN). Passing {internet: true} adds one public
 // STUN server to reach peers across NATs; that sends the browser's address to that server, so it is opt-in.
 import { createRing, RingReader, RingWriter } from '../tools/lift/host/ring.mjs';
+import { hubUrl } from './hub.js';
 
 const VNET = (10 << 24) | (77 << 16), HOST_IP = VNET | 1;
 const ipStr = (n) => [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.');
@@ -55,10 +56,39 @@ export class P2P {
   route(f) {
     if (f[0] !== 1 || f.length < 13) return;
     const dst = new DataView(f.buffer, f.byteOffset).getUint32(7) >>> 0;
+    if ((dst >>> 8) !== (VNET >>> 8) && dst !== 0xffffffff && (dst >>> 24) !== 127) return this.relayOut(f);
     const broadcast = dst === 0xffffffff || ((dst >>> 8) === (VNET >>> 8) && (dst & 255) === 255);
     const targets = broadcast ? [...this.peers.values()] : [this.peers.get(this.role === 'guest' ? HOST_IP : dst)];
     if (!targets.length || !targets[0]) this.stats.noPeer++;
     for (const ch of targets) { if (ch?.readyState !== 'open') { this.stats.notOpen++; continue; } try { ch.send(f); this.stats.out++; } catch { this.stats.sendFail++; } }
+  }
+  // Real servers (any address outside the virtual network) are reached through the hub's UDP relay (hub/servers.mjs):
+  // page -> hub [u16 local port][u32 ip][u16 port][payload], hub -> page [u32 ip][u16 port][u16 local port][payload].
+  relayOut(f) {
+    const r = this.relaySocket();
+    if (!r) { this.stats.noPeer++; return; }
+    const out = new Uint8Array(8 + f.length - 13), dv = new DataView(out.buffer), src = new DataView(f.buffer, f.byteOffset);
+    dv.setUint16(0, src.getUint16(5)); dv.setUint32(2, src.getUint32(7)); dv.setUint16(6, src.getUint16(11)); out.set(f.subarray(13), 8);
+    if (r.readyState === 1) { r.send(out); this.stats.relayOut = (this.stats.relayOut ?? 0) + 1; }
+    else if (this.relayQueue.length < 64) this.relayQueue.push(out);
+  }
+  relaySocket() {
+    if (this.relay && this.relay.readyState <= 1) return this.relay;
+    const url = hubUrl();
+    if (!url) return null;
+    if (Date.now() - (this.relayTried ?? 0) < 3000) return null;
+    this.relayTried = Date.now(); this.relayQueue = [];
+    const ws = this.relay = new WebSocket(url.replace(/\/?$/, '/udp'));
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = () => { for (const b of this.relayQueue.splice(0)) ws.send(b); };
+    ws.onmessage = (e) => {
+      const b = new Uint8Array(e.data);
+      if (b.length < 8) return;
+      const v = new DataView(b.buffer), f = new Uint8Array(13 + b.length - 8), fv = new DataView(f.buffer);
+      f[0] = 1; fv.setUint32(1, v.getUint32(0)); fv.setUint16(5, v.getUint16(4)); fv.setUint32(7, this.ip); fv.setUint16(11, v.getUint16(6)); f.set(b.subarray(8), 13);
+      if (this.writer.tryWrite(f)) this.stats.relayIn = (this.stats.relayIn ?? 0) + 1; else this.stats.ringFull++;
+    };
+    return ws;
   }
   connection() { return new RTCPeerConnection({ iceServers: this.internet ? [{ urls: 'stun:stun.l.google.com:19302' }] : [] }); }
   attach(pc, ch, ip) {

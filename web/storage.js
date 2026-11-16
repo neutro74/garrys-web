@@ -59,6 +59,10 @@ export function menuHost(storage,p2p,{edition='base',startedOff='',lobby=null,se
    case 'p2p-finish':if(!p2p)throw Error('Peer-to-peer play is not enabled');await p2p.finishInvite(args.code);return p2p.status();
    case 'p2p-accept':if(!p2p)throw Error('Peer-to-peer play is not enabled');return p2p.acceptInvite(args.code);
    // Hub lobbies (web/lobby.js): list, host and join peer-to-peer games without copying codes.
+   // Real servers (hub/servers.mjs), for the server browser in menu-extras.js.
+   case 'server-list':return hubJson('servers');
+   case 'server-info':return hubJson('servers/info?addr='+encodeURIComponent(String(args.addr)));
+   case 'server-players':return hubJson('servers/players?addr='+encodeURIComponent(String(args.addr)));
    case 'lobby-status':if(!lobby?.available)return {disabled:true};lobby.connect();return lobby.status();
    case 'lobby-host':if(!lobby)throw Error('Peer-to-peer play is not enabled');return lobby.host(args);
    case 'lobby-unhost':if(!lobby)throw Error('Peer-to-peer play is not enabled');return lobby.unhost();

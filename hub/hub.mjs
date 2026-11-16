@@ -11,6 +11,7 @@ import crypto from 'node:crypto';
 import { createWorkshop } from './workshop.mjs';
 import { createVersions } from './versions.mjs';
 import { createAccounts } from './accounts.mjs';
+import { createServers } from './servers.mjs';
 
 const PORT = +(process.env.PORT ?? 8787), HOST = process.env.HOST ?? '0.0.0.0';
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
@@ -57,11 +58,15 @@ class Conn {
         this.parts.push(body);
         if (this.parts.reduce((a, p) => a + p.length, 0) > LIMITS.frame) return this.close(1009);
         if (fin) { const text = Buffer.concat(this.parts).toString('utf8'); this.parts = []; this.message(text); }
-      } else if (op === 2) return this.close(1003);
+      } else if (op === 2) {
+        if (!this.onBinary || !fin) return this.close(1003);
+        this.onBinary(body);
+      }
     }
   }
   raw(b) { if (!this.closed) this.socket.write(b); }
   send(obj) { this.raw(frame(1, Buffer.from(JSON.stringify(obj)))); }
+  sendBinary(b) { if (!this.closed && this.socket.writableLength < 4 << 20) this.socket.write(frame(2, b)); }
   close(code = 1000) {
     if (this.closed) return;
     const p = Buffer.alloc(2); p.writeUInt16BE(code); this.raw(frame(8, p));
@@ -75,6 +80,7 @@ class Conn {
     this.tokens -= 1; return true;
   }
   message(text) {
+    if (this.relay) return;
     let m;
     try { m = JSON.parse(text); } catch { return this.send({ t: 'error', error: 'Bad message' }); }
     if (!m || typeof m.t !== 'string') return;
@@ -84,6 +90,7 @@ class Conn {
   gone() {
     if (this.gone_) return;
     this.gone_ = true; this.closed = true;
+    if (this.relay) { relays.delete(this); this.onClose?.(); return; }
     clients.delete(this);
     for (const r of this.rooms) leaveRoom(this, r);
     for (const [id, l] of lobbies) if (l.host === this) dropLobby(id);
@@ -94,6 +101,7 @@ class Conn {
 const clients = new Set();
 const rooms = new Map(ROOMS.map((r) => [r, { members: new Set(), history: [] }]));
 const lobbies = new Map();   // id -> { host: Conn, info }
+const relays = new Set();    // /udp connections (hub/servers.mjs)
 const byId = (id) => { for (const c of clients) if (c.id === id) return c; return null; };
 const user = (c) => ({ id: c.id, name: c.name });
 const clean = (s, max) => String(s ?? '').replace(/[\u0000-\u001f\u007f​-‏‪-‮]/g, '').trim().slice(0, max);
@@ -107,8 +115,9 @@ function leaveRoom(c, name) {
   toRoom(name, { t: 'left', room: name, user: user(c) });
 }
 function lobbyView(id, l) { return { id, host: l.host.id, hostName: l.host.name, ...l.info }; }
-function lobbyList() { return [...lobbies].map(([id, l]) => lobbyView(id, l)); }
-function pushLobbies() { const list = lobbyList(); for (const c of clients) if (c.watching) c.send({ t: 'lobbies', lobbies: list }); }
+// A game marked LAN ("Local Server" in Start New Game) is shown only to players behind the same public address.
+function lobbyList(viewer) { return [...lobbies].filter(([, l]) => !l.info.lan || l.host.ip === viewer?.ip).map(([id, l]) => lobbyView(id, l)); }
+function pushLobbies() { for (const c of clients) if (c.watching) c.send({ t: 'lobbies', lobbies: lobbyList(c) }); }
 function dropLobby(id) { if (lobbies.delete(id)) pushLobbies(); }
 
 function handle(c, m) {
@@ -144,11 +153,11 @@ function handle(c, m) {
       return c.send({ t: 'welcome', id: c.id, name, rooms: roomList(), online: clients.size });
     }
     // Lobbies: a host advertises a game; joiners ask to join and the two clients exchange pairing codes via 'signal'.
-    case 'watch-lobbies': c.watching = m.on !== false; return c.send({ t: 'lobbies', lobbies: lobbyList() });
+    case 'watch-lobbies': c.watching = m.on !== false; return c.send({ t: 'lobbies', lobbies: lobbyList(c) });
     case 'host': {
       const i = m.lobby ?? {};
       const info = { name: clean(i.name, 48) || `${c.name}'s game`, edition: i.edition === 'extended' ? 'extended' : 'base', map: clean(i.map, 48),
-        gamemode: clean(i.gamemode, 32), players: Math.max(0, Math.min(64, i.players | 0)), max: Math.max(2, Math.min(64, i.max | 0 || 8)), locked: !!i.locked };
+        gamemode: clean(i.gamemode, 32), lan: !!i.lan, players: Math.max(0, Math.min(64, i.players | 0)), max: Math.max(2, Math.min(64, i.max | 0 || 8)), locked: !!i.locked };
       let id = [...lobbies].find(([, l]) => l.host === c)?.[0];
       if (!id) { if (lobbies.size >= LIMITS.lobbies) throw Error('Too many open games right now.'); id = crypto.randomBytes(5).toString('base64url'); }
       lobbies.set(id, { host: c, info });
@@ -172,11 +181,12 @@ function handle(c, m) {
 const clientIp = (req) => (TRUST_PROXY && (req.headers['cf-connecting-ip'] || String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim())) || req.socket.remoteAddress;
 const originOk = (o) => !ORIGINS.length || ORIGINS.includes(o);
 const cors = (req) => ({ 'Access-Control-Allow-Origin': originOk(req.headers.origin) && req.headers.origin ? req.headers.origin : ORIGINS[0] ?? '*', Vary: 'Origin' });
-const workshop = createWorkshop(), versions = createVersions(), accounts = createAccounts();
+const workshop = createWorkshop(), versions = createVersions(), accounts = createAccounts(), servers = createServers({ log: console.log });
 const server = http.createServer(async (req, res) => {
   if (await workshop(req, res, { ip: clientIp(req), headers: cors(req) })) return;
   if (await versions(req, res, { ip: clientIp(req), headers: cors(req) })) return;
   if (await accounts(req, res, { ip: clientIp(req), headers: cors(req) })) return;
+  if (await servers.handle(req, res, { ip: clientIp(req), headers: cors(req) })) return;
   if (req.url === '/health' || req.url === '/status') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...cors(req) });
     return res.end(JSON.stringify({ ok: true, online: clients.size, rooms: roomList(), lobbies: lobbies.size }));
@@ -189,6 +199,12 @@ server.on('upgrade', (req, socket) => {
   if (!key || String(req.headers.upgrade).toLowerCase() !== 'websocket') return reject(400, 'Bad Request');
   if (!originOk(req.headers.origin)) return reject(403, 'Forbidden');
   const ip = clientIp(req);
+  if (req.url.startsWith('/udp')) {
+    if (relays.size >= 200 || [...relays].filter((c) => c.ip === ip).length >= 2) return reject(429, 'Too Many Connections');
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${crypto.createHash('sha1').update(key + GUID).digest('base64')}\r\n\r\n`);
+    const c = new Conn(socket, ip); c.relay = true; relays.add(c); servers.relay(c);
+    return;
+  }
   if (clients.size >= LIMITS.clients) return reject(503, 'Busy');
   if ([...clients].filter((c) => c.ip === ip).length >= LIMITS.perIp) return reject(429, 'Too Many Connections');
   const accept = crypto.createHash('sha1').update(key + GUID).digest('base64');

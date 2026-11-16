@@ -9,6 +9,9 @@ One small Node server (no dependencies) for the browser build's online features:
 - **Workshop** (`hub/workshop.mjs`): browse Garry's Mod Workshop items and fetch their `.gma` files. The browser cannot do
   this against Steam itself (no CORS, and most items have no direct download link). Files come from
   [DepotDownloader](https://github.com/SteamRE/DepotDownloader)'s anonymous login and are cached on disk.
+- **Real servers** (`hub/servers.mjs`): Steam's server list for Garry's Mod (`GET /servers`, needs `STEAM_KEY`), with each
+  server asked for A2S_INFO from the hub for its details and ping, and a UDP relay (WebSocket `/udp`) so the browser can
+  play on them. The relay only reaches addresses known to be Garry's Mod servers and caps each connection at 1 MB/s.
 
 ## Running it
 
@@ -34,7 +37,7 @@ The page finds the hub from `?hub=wss://…` (remembered), else `HUB_DEFAULT` in
 `/etc/gmod-hub.env` (`STEAM_KEY=...`, mode 600). Tailscale Funnel gives it a public HTTPS/WSS address:
 
 ```
-sudo install -m 644 hub/hub.mjs hub/workshop.mjs /opt/gmod-hub/
+sudo install -m 644 hub/*.mjs /opt/gmod-hub/
 sudo install -m 644 hub/gmod-hub.service /etc/systemd/system/ && sudo systemctl daemon-reload
 sudo systemctl restart gmod-hub
 sudo tailscale funnel --bg 8787

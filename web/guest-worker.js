@@ -10,7 +10,7 @@ self.onmessage = async (e) => {
   if (e.data.type !== 'boot') return;
   self.onmessage = null;
   try { await boot(e.data); }
-  catch (err) { post({ type: 'error', text: `${err?.stack || err}` }); }
+  catch (err) { post(/^(ExitProcess|TerminateProcess)\b/.test(err?.message ?? '') ? { type: 'quit' } : { type: 'error', text: `${err?.stack || err}` }); }
 };
 
 
@@ -28,7 +28,7 @@ async function boot({ env, cmdline, htmlRing, inputRing, audioRing, overlayBuffe
   installInput(SHIMS);
   const { installWaveOut } = await import(host + 'waveout.mjs');
   installWaveOut(SHIMS);
-  // Peer-to-peer networking (UDP sockets over WebRTC, see web/p2p.js) is experimental: only with ?mp=1.
+  // Networking: UDP sockets carried over WebRTC to other players and over the hub's relay to real servers (web/p2p.js).
   if (env.mp === '1') { const { installWinsock } = await import(host + 'winsock.mjs'); installWinsock(SHIMS); }
   const { preloadFonts } = await import(host + 'gdi.mjs');
   const { DirectBackend, WorkerBackend } = await import(host + 'd3d9-backend.mjs');
@@ -135,7 +135,10 @@ async function boot({ env, cmdline, htmlRing, inputRing, audioRing, overlayBuffe
   try {
     const rc = g.call(launcher, launcher.meta.exports.LauncherMain, [0x400000, 0, g.cmdline, 1]);
     post({ type: 'log', text: `LauncherMain returned ${rc}` });
+    post({ type: 'quit' });
   } catch (err) {
-    post({ type: 'error', text: `${err?.stack || err}` });
+    // Quit (the menu's Quit button, the `quit` command) ends in ExitProcess: back to the launcher, not an error.
+    if (/^(ExitProcess|TerminateProcess)\b/.test(err?.message ?? '')) post({ type: 'quit' });
+    else post({ type: 'error', text: `${err?.stack || err}` });
   }
 }

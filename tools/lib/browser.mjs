@@ -5,6 +5,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
+// Browsers this process started, closed when it ends however it ends: each runs in its own systemd scope, so one left behind
+// by a script stopped with Ctrl+C or `timeout` would otherwise keep running (and keep its memory) indefinitely.
+const live = new Map();   // child process -> temporary profile dir (or null)
+function killAll() {
+  for (const [proc, dir] of live) { try { proc.kill('SIGKILL'); } catch { /* gone */ } if (dir) try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* busy */ } }
+  live.clear();
+}
+let hooked = false;
+function hookExit() {
+  if (hooked) return; hooked = true;
+  process.on('exit', killAll);
+  for (const [sig, n] of [['SIGINT', 2], ['SIGTERM', 15], ['SIGHUP', 1]]) process.on(sig, () => { killAll(); process.exit(128 + n); });
+}
 export async function launch({ width = 1280, height = 720, gpu = false, webgpu = false, profile, headed = false } = {}) {
   const dir = profile ?? fs.mkdtempSync(path.join(os.tmpdir(), 'gamebox-chrome-'));
   // A killed Chromium leaves its singleton lock behind and the next launch refuses the profile.
@@ -33,6 +46,8 @@ export async function launch({ width = 1280, height = 720, gpu = false, webgpu =
   const proc = scoped
     ? spawn('systemd-run', ['--user', '--scope', '--quiet', '-p', `MemoryMax=${process.env.BROWSER_MEM || '4G'}`, '-p', `MemorySwapMax=${process.env.BROWSER_CPU_QUOTA ? '0' : '512M'}`, ...quota, '--', ...executable, ...args], { stdio: ['ignore', 'ignore', 'pipe'] })
     : spawn(executable[0], [...executable.slice(1), ...args], { stdio: ['ignore', 'ignore', 'pipe'] });
+  hookExit(); live.set(proc, profile ? null : dir);
+  proc.on('exit', () => live.delete(proc));
   const wsUrl = await new Promise((resolve, reject) => {
     let err = '';
     proc.stderr.on('data', (d) => {

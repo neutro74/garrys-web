@@ -582,6 +582,7 @@ function menu(ext, backdrop, opts = {}) {
       panel = panel === k ? null : k;
       panelEl.hidden = !panel; newsEl.hidden = !!panel;
       for (const a of page.querySelectorAll('[data-open]')) a.classList.toggle('cur', a.dataset.open === panel);
+      render();
       if (panel === 'chat') closePanel = chatPanel(panelEl, hub);
       else if (panel === 'versions') versionsPanel(panelEl, { ext, highlight: opts.highlight, onPlay: (v) => play(v.edition, v) });
       else if (panel === 'profile') profilePanel(panelEl, hub, (why) => { if (why === 'close') openPanel('profile'); else location.reload(); });
@@ -596,7 +597,7 @@ function menu(ext, backdrop, opts = {}) {
     const render = () => {
       for (const a of page.querySelectorAll('[data-ed]')) a.classList.toggle('cur', a.dataset.ed === edition);
       for (const d of page.querySelectorAll('[data-pager]')) d.classList.toggle('selected', d.dataset.pager === card);
-      for (const a of page.querySelectorAll('[data-open="about"]')) a.classList.toggle('cur', card === 'about');
+      for (const a of page.querySelectorAll('[data-open="about"]')) a.classList.toggle('cur', card === 'about' && !panel);   // a panel covers the card
       const e = card === 'about' ? ABOUT : EDITIONS[card];
       $('[data-news]').classList.toggle('banner', !!e.banner);
       $('[data-news]').style.backgroundImage = `url("${e.banner ? brand('banner.png') : game(e.picture)}")`;

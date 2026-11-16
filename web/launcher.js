@@ -130,10 +130,11 @@ async function extendedInfo() {
 // open panels in the card's place (chat, the files this browser keeps, controls). The bottom strip is its NavBar,
 // with the graphics preset where the game has its gamemode chooser.
 const WHATS_NEW = [
+  ['Real servers', 'Sign in with Steam from Profile to join regular Garry\'s Mod servers in Find Multiplayer Game.'],
+  ['Multiplayer', 'Start New Game with more than one player and friends find your game in the server list.'],
+  ['Private chats', 'Message other players one to one from Chat; messages are kept.'],
+  ['Discord', 'Join the community server from About.'],
   ['Game Versions', 'Make your own setup: an edition plus any Workshop addons. Share it as a link.'],
-  ['Workshop', 'Browse and install Workshop addons from the in-game Addons page.'],
-  ['Accounts', 'Sign in from Profile and your versions, addons and settings follow you.'],
-  ['Chat', 'Talk to other players from this menu.'],
 ]
 const CONTROLS = [
   ['W A S D', 'Move'], ['Space / Ctrl', 'Jump / crouch'], ['Shift', 'Sprint'], ['Q (hold)', 'Spawn menu'], ['C (hold)', 'Context menu'],

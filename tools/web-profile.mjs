@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // CPU profile of the guest worker (engine main thread plus its WebGL renderer) in a running map.
 //   node tools/web-profile.mjs [--headed] [--query "cmd=+map gm_construct"] [--wait 150] [--seconds 15] [--profile run/profile-chrome]
+//                              [--console "+menu"]   (a console command run through the menu just before recording)
 // Waits until frames are being presented, records a V8 profile, and prints self time grouped by lifted DLL
 // (wasm chunks carry the DLL name in their URL) and by JS function. The raw .cpuprofile goes to run/.
 import { spawn } from 'node:child_process';
@@ -38,6 +39,8 @@ if (!worker) { console.log('[profile] no guest worker session'); await done(1); 
 await browser.send('Profiler.enable', {}, worker);
 await browser.send('Profiler.setSamplingInterval', { interval: 200 }, worker);
 const f0 = await frames();
+const command = arg('console');
+if (command) console.log('[profile] console:', await browser.eval(`(()=>{const f=[...document.querySelectorAll('iframe')].find(f=>{try{return typeof f.contentWindow.AddServer==='function'}catch{return false}});if(!f)return 'no menu';f.contentWindow.lua.Run('RunConsoleCommand(%s)', ${JSON.stringify(command)});return 'sent'})()`));
 await browser.send('Profiler.start', {}, worker);
 await new Promise((r) => setTimeout(r, seconds * 1000));
 const { profile: prof } = await browser.send('Profiler.stop', {}, worker);

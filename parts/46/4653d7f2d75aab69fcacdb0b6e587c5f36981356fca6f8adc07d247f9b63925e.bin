@@ -1,0 +1,4 @@
+"UnlitGeneric" {
+  "$basetexture" "models/props_buildings/antenna"
+  "$alphatest" 1
+}

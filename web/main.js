@@ -58,7 +58,7 @@ function windowSize() {
   return [Math.max(640, Math.round(w * k)) & ~1, Math.max(480, Math.round(h * k)) & ~1];   // GMod's chat font needs 480 lines
 }
 // A window that fills most of the screen is about to go (or is) fullscreen: the engine takes the screen's size, so
-// fullscreen is sharp even though the engine cannot always change size once running. In the window it is scaled down a little.
+// fullscreen is sharp. The size is fixed once the game starts; in a smaller window the picture is scaled down a little.
 function targetSize() {
   const dpr = Math.max(1, devicePixelRatio || 1), sw = screen?.width || 0, sh = screen?.height || 0;
   if (!sw || innerWidth < 0.9 * sw || innerHeight < 0.75 * sh) return windowSize();
@@ -66,25 +66,7 @@ function targetSize() {
   return [Math.round(sw * dpr * k) & ~1, Math.max(480, Math.round(sh * dpr * k)) & ~1];
 }
 params.win = targetSize().join('x');
-// Later window changes (fullscreen, resizing, moving to another screen) resize the engine too, through the menu's Lua
-// (mat_setvideomode), so the picture is never a stretched copy of the size the game started at. ?res= pins the size.
-if (!params.res) {
-  let timer = 0;
-  // Retried a few times: a command sent while a map loads can be lost.
-  const follow = (tries = 6) => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      const [w, h] = targetSize();
-      if (!input.w || (w === input.w && h === input.h)) return;
-      if (tries > 1) setTimeout(() => follow(tries - 1), 2500);
-      // The newest menu page: while addons remount at startup the menu reloads, and the old page no longer runs anything.
-      const menu = [...document.querySelectorAll('iframe')].filter((f) => { try { return typeof f.contentWindow.AddServer === 'function' && f.contentWindow.lua?.Run; } catch { return false; } }).pop();
-      try { menu?.contentWindow.lua.Run('RunConsoleCommand("mat_setvideomode", %s, %s, "1")', String(w), String(h)); } catch { /* menu not ready */ }
-    }, 700);
-  };
-  addEventListener('resize', () => follow());
-  document.addEventListener('fullscreenchange', () => follow());
-}
+
 // This browser's player identity: a random Steam account id (kept, so saves and bans stay with the player) and the name
 // chosen in the launcher's chat, used in game (steam.mjs).
 // Signed in to Steam (Profile, web/steam-account.js): the game uses the real SteamID, and real login tickets from the hub

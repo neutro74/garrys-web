@@ -172,11 +172,26 @@ const png = (c, name) => fs.writeFileSync(path.join(out, name), c.toBuffer('imag
 png(lockup(1), 'logo.png');
 png(lockup(2), 'logo@2x.png');
 png(lockup(4), 'logo@4x.png');
-for (const size of [512, 256, 192, 180, 64, 32, 16]) {
+// 16 px: the scaled drawing loses the tab strip and reads as GMod's own icon, so this size is drawn on the pixel grid: a dark
+// strip along the top with the active tab (page blue, joined to the page) and a background tab, then a smaller g.
+function icon16() {
+  const c = createCanvas(16, 16), ctx = c.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, 16); grad.addColorStop(0, TILE_TOP); grad.addColorStop(0.5, TILE); grad.addColorStop(1, '#1092ee');
+  ctx.beginPath(); ctx.roundRect(0, 0, 16, 16, 2.5); ctx.fillStyle = grad; ctx.fill();
+  ctx.save(); ctx.clip();
+  ctx.fillStyle = '#075ca4'; ctx.fillRect(0, 0, 16, 4);
+  ctx.fillStyle = '#3a9be6'; ctx.fillRect(9, 1, 5, 3);
+  ctx.fillStyle = TILE_TOP; ctx.fillRect(2, 1, 6, 4);
+  ctx.restore();
+  ctx.fillStyle = '#fff'; ctx.font = FONT(13); ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.fillText('g', 8, 13);
+  return c;
+}
+for (const size of [512, 256, 192, 180, 64, 32]) {
   const c = createCanvas(size, size), ctx = c.getContext('2d'), s = (size / 96) * (size <= 32 ? 0.98 : 0.86);
   drawTile(ctx, (size - 96 * s) / 2, (size - 96 * s) / 2 + (size <= 32 ? 0 : size * 0.02), s, { shadow: size > 32, detail: size >= 32 });
   png(c, `icon-${size}.png`);
 }
+png(icon16(), 'icon-16.png');
 png(hero(), 'banner.png');
 // favicon.ico: 16 and 32 px PNG images in an ICO container
 const ico = (files) => {

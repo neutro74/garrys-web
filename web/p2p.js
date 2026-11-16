@@ -28,10 +28,13 @@ const gathered = (pc, ms = 4000) => new Promise((resolve) => {
 });
 
 export class P2P {
-  constructor({ edition = 'base', internet = false } = {}) {
-    this.edition = edition; this.internet = internet;
+  // identity: { steamid (64-bit, as a string), name }: sent to each peer when its link opens, so every game can name every
+  // player (the host also passes on the others' names).
+  constructor({ edition = 'base', internet = false, identity = null } = {}) {
+    this.edition = edition; this.internet = internet; this.identity = identity; this.names = new Map();
     this.toGuest = createRing(1 << 20); this.fromGuest = createRing(1 << 20);
     this.writer = new RingWriter(this.toGuest); this.reader = new RingReader(this.fromGuest);
+    this.stats = { out: 0, in: 0, sendFail: 0, notOpen: 0, ringFull: 0, noPeer: 0 };
     this.role = null; this.peers = new Map(); this.pending = new Map(); this.listeners = new Set(); this.ip = HOST_IP;
     this.pump();
   }
@@ -39,7 +42,7 @@ export class P2P {
   onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   changed() { for (const fn of this.listeners) fn(this.status()); }
   status() {
-    return { role: this.role, edition: this.edition, ip: ipStr(this.ip), peers: [...this.peers.keys()].map(ipStr), pending: [...this.pending.keys()].map(ipStr) };
+    return { stats: { ...this.stats }, role: this.role, edition: this.edition, ip: ipStr(this.ip), peers: [...this.peers.keys()].map(ipStr), pending: [...this.pending.keys()].map(ipStr) };
   }
   setIp(ip) { this.ip = ip; const f = new Uint8Array(5); f[0] = 2; new DataView(f.buffer).setUint32(1, ip); this.writer.tryWrite(f); }
   // Datagrams from the engine go to the peer that owns the destination; a joiner only ever talks to the host.
@@ -54,16 +57,38 @@ export class P2P {
     const dst = new DataView(f.buffer, f.byteOffset).getUint32(7) >>> 0;
     const broadcast = dst === 0xffffffff || ((dst >>> 8) === (VNET >>> 8) && (dst & 255) === 255);
     const targets = broadcast ? [...this.peers.values()] : [this.peers.get(this.role === 'guest' ? HOST_IP : dst)];
-    for (const ch of targets) if (ch?.readyState === 'open') { try { ch.send(f); } catch { /* channel closing */ } }
+    if (!targets.length || !targets[0]) this.stats.noPeer++;
+    for (const ch of targets) { if (ch?.readyState !== 'open') { this.stats.notOpen++; continue; } try { ch.send(f); this.stats.out++; } catch { this.stats.sendFail++; } }
   }
   connection() { return new RTCPeerConnection({ iceServers: this.internet ? [{ urls: 'stun:stun.l.google.com:19302' }] : [] }); }
   attach(pc, ch, ip) {
     ch.binaryType = 'arraybuffer';
-    ch.onopen = () => { this.peers.set(ip, ch); this.pending.delete(ip); this.changed(); };
-    ch.onmessage = (e) => { if (!this.writer.tryWrite(new Uint8Array(e.data))) { /* ring full: UDP may drop */ } };
+    ch.onopen = () => {
+      this.peers.set(ip, ch); this.pending.delete(ip); this.changed();
+      const hello = (who) => { try { ch.send(JSON.stringify({ t: 'name', ...who })); } catch { /* closing */ } };
+      if (this.identity) hello(this.identity);
+      if (this.role === 'host') for (const [steamid, name] of this.names) hello({ steamid, name });
+    };
+    ch.onmessage = (e) => {
+      if (typeof e.data === 'string') return this.control(e.data, ch);
+      if (this.writer.tryWrite(new Uint8Array(e.data))) this.stats.in++; else this.stats.ringFull++;
+    };
     const gone = () => { if (this.peers.get(ip) === ch) this.peers.delete(ip); this.pending.delete(ip); if (this.role === 'guest' && !this.peers.size) this.role = null; this.changed(); };
     ch.onclose = gone;
     pc.onconnectionstatechange = () => { if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) gone(); };
+  }
+  // Control messages (text, unlike game datagrams): player names, handed to the game and, on the host, to the other peers.
+  control(text, from) {
+    let m; try { m = JSON.parse(text); } catch { return; }
+    if (m.t !== 'name' || !/^\d{1,20}$/.test(String(m.steamid))) return;
+    const name = String(m.name ?? '').replace(/[\u0000-\u001f]/g, '').slice(0, 31) || 'Player';
+    this.names.set(String(m.steamid), name);
+    this.setName(BigInt(m.steamid), name);
+    if (this.role === 'host') for (const ch of this.peers.values()) if (ch !== from && ch.readyState === 'open') ch.send(JSON.stringify({ t: 'name', steamid: String(m.steamid), name }));
+  }
+  setName(steamid, name) {
+    const b = new TextEncoder().encode(name), f = new Uint8Array(9 + b.length), dv = new DataView(f.buffer);
+    f[0] = 3; dv.setBigUint64(1, steamid); f.set(b, 9); this.writer.tryWrite(f);
   }
   // Host: one invite per joiner.
   async createInvite() {
@@ -71,10 +96,10 @@ export class P2P {
     this.role = 'host'; this.setIp(HOST_IP);
     let ip = HOST_IP + 1; while (this.peers.has(ip) || this.pending.has(ip)) ip++;
     if ((ip & 255) > 250) throw Error('Too many players.');
-    // Reliable but unordered: real UDP would lose some of the bursts of split packets a server sends a joining client (its
-    // Lua and string tables), and the engine's own recovery stalls the join; SCTP retransmits instead, and unordered
-    // delivery keeps one late packet from holding up the rest.
-    const pc = this.connection(), ch = pc.createDataChannel('gw', { ordered: false });
+    // Reliable and ordered: a joining client gets its signon data as one large message split into numbered pieces; lost
+    // pieces stall the join, and pieces arriving out of order (a resend among a newer sequence) make the engine discard
+    // the reassembly ("Ignoring duplicated split packet"). In-order delivery avoids both.
+    const pc = this.connection(), ch = pc.createDataChannel('gw', { ordered: true });
     this.pending.set(ip, { pc, ch }); this.attach(pc, ch, ip);
     await pc.setLocalDescription(await pc.createOffer()); await gathered(pc);
     this.changed();

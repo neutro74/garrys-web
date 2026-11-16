@@ -247,6 +247,17 @@ function steamMethod(ctx, version, index, args) {
       case 31: return 0;                   // GetDurationControl
     }
   }
+  // ISteamFriends in this SDK starts at GetPersonaName (no GetHSteamUser, no SetPersonaName): the calls GMod makes are
+  // 0 GetPersonaName, 6 GetFriendPersonaName(steamID) (how it names every player, itself included) and 41/42 Set/Clear
+  // RichPresence. Other players' names come from the peer-to-peer layer (g.steamNames, filled by winsock.mjs).
+  if (version === 'SteamFriends018' && (index === 0 || index === 6 || index === 41 || index === 42)) {
+    if (index === 41) return 1;
+    if (index === 42) return 0;
+    const name = (n) => (st.nameStr ||= new Map()).get(n) ?? (st.nameStr.set(n, g.cstr(n)), st.nameStr.get(n));
+    if (index === 0) return name(PERSONA);
+    const id = (BigInt(args[1] >>> 0) << 32n) | BigInt(args[0] >>> 0);
+    return name(id === st.steamId ? PERSONA : g.steamNames?.get(id) ?? 'Player');
+  }
   if (version === 'SteamFriends018') {
     switch (index) {
       case 0: return st.user;              // GetHSteamUser

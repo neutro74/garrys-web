@@ -58,6 +58,9 @@ try {
   if (!/^\d{1,10}$/.test(id ?? '')) { id = String(1e6 + Math.floor(Math.random() * 2e9)); localStorage.setItem('garrys-wasm.steamid', id); }
   params.steamid ??= id;
   params.name ??= localStorage.getItem('garrys-wasm.name') || `Player${id.slice(-4)}`;
+  // The engine's player name comes from its name cvar (shown to other players); set it from the profile.
+  const safe = String(params.name).replace(/[\u0000-\u001f"';]/g, '').trim().slice(0, 31);
+  if (safe) params.cmd = `${params.cmd ?? ''} +name "${safe}"`.trim();
   // Player colour from the launcher's Profile (r g b, 0..1), applied like the in-game Player Model editor does.
   const color = localStorage.getItem('garrys-wasm.playercolor');
   if (/^[\d.]+ [\d.]+ [\d.]+$/.test(color ?? '')) params.cmd = `${params.cmd ?? ''} +cl_playercolor "${color}"`.trim();
@@ -106,7 +109,8 @@ const panels = new HtmlPanels(document.body, canvas, (ev) => { if (!htmlWriter.t
 const edition = params.edition === 'extended' ? 'extended' : 'base';
 // With a hub, games are found and paired through it (web/lobby.js) and may cross the internet, so WebRTC also asks one public
 // STUN server for this browser's public address; without a hub, pairing is by invite codes on the local network only.
-const p2p = params.mp === '1' ? new P2P({ edition, internet: !!hubUrl() }) : null;   // experimental: ?mp=1
+const identity = params.steamid ? { steamid: String(76561197960265728n + BigInt(params.steamid)), name: String(params.name ?? 'Player') } : null;
+const p2p = params.mp === '1' ? new P2P({ edition, internet: !!hubUrl(), identity }) : null;   // experimental: ?mp=1
 const lobby = p2p ? new Lobby(p2p, { edition }) : null;
 window.__p2p = p2p;
 panels.host = menuHost(storage, p2p, { edition, lobby, session, startedOff: String(params.disabledAddons ?? '').split(',').filter(Boolean).sort().join(',') });

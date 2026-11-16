@@ -30,6 +30,8 @@ function pump(g) {
   if (!st.rx) { st.rx = g.netIn; }
   for (let f; (f = st.rx.read());) {
     if (f[0] === 2 && f.length >= 5) { st.myIp = new DataView(f.buffer, f.byteOffset).getUint32(1) >>> 0; continue; }
+    // a player's name from the peer-to-peer layer: [3][steam id, u64 big-endian][utf-8 name], for steam.mjs
+    if (f[0] === 3 && f.length >= 9) { (g.steamNames ||= new Map()).set(new DataView(f.buffer, f.byteOffset).getBigUint64(1), new TextDecoder().decode(f.subarray(9))); continue; }
     if (f[0] !== 1 || f.length < 13) continue;
     const dv = new DataView(f.buffer, f.byteOffset, f.byteLength);
     deliver(st, { ip: dv.getUint32(1) >>> 0, port: dv.getUint16(5) }, dv.getUint32(7) >>> 0, dv.getUint16(11), f.subarray(13));
@@ -37,7 +39,12 @@ function pump(g) {
 }
 // GUEST_DEBUG_NET=1: connectionless packets (the connect handshake: q challenge request, A challenge, k connect, B accept,
 // 9 reject, T/U/V queries) and every dropped datagram are logged with addresses.
-const kind = (b) => (b.length >= 5 && b[0] === 255 && b[1] === 255 && b[2] === 255 && b[3] === 255 ? `'${String.fromCharCode(b[4])}'` : b.length >= 4 && b[0] === 0xfe && b[1] === 0xff ? 'split' : 'netchan');
+// Split packets: int32 -2, int32 sequence, uint16 (piece number << 8 | piece count), uint16 split size.
+const kind = (b) => {
+  if (b.length >= 5 && b[0] === 255 && b[1] === 255 && b[2] === 255 && b[3] === 255) return `'${String.fromCharCode(b[4])}'`;
+  if (b.length >= 12 && b[0] === 0xfe && b[1] === 0xff && b[2] === 0xff && b[3] === 0xff) { const dv = new DataView(b.buffer, b.byteOffset, b.byteLength), id = dv.getUint16(8, true); return `split seq=${dv.getInt32(4, true)} ${id >> 8}/${id & 255} size=${dv.getUint16(10, true)}`; }
+  return 'netchan';
+};
 function trace(st, what, from, toIp, toPort, bytes) {
   if (!st.dbg || !st.log) return;
   const k = kind(bytes);
@@ -52,6 +59,7 @@ function deliver(st, from, dstIp, dstPort, bytes) {
     // startup, before a joiner is given 10.77.0.N), so "this machine" matches whatever the address is now.
     if (s.bound.ip && s.bound.ip !== dstIp && !isBroadcast(dstIp) && !(s.bound.ip !== LOOPBACK && dstIp === st.myIp)) continue;
     if (s.queue.length < 512) s.queue.push({ from, bytes: bytes.slice() });
+    else { st.stats.queueFull = (st.stats.queueFull ?? 0) + 1; if (st.dbg && st.log && (st.stats.queueFull & (st.stats.queueFull - 1)) === 0) st.log(`[net] SOCKET QUEUE FULL x${st.stats.queueFull}`); }
     hit = true;
   }
   if (hit) { st.stats.received++; trace(st, 'rx', from, dstIp, dstPort, bytes); }
@@ -61,7 +69,10 @@ function sendOut(g, srcIp, srcPort, dstIp, dstPort, bytes) {
   if (!g.netOut) return;
   const f = new Uint8Array(13 + bytes.length), dv = new DataView(f.buffer);
   f[0] = 1; dv.setUint32(1, srcIp); dv.setUint16(5, srcPort); dv.setUint32(7, dstIp); dv.setUint16(11, dstPort); f.set(bytes, 13);
-  g.netOut.tryWrite(f);           // UDP: a full ring drops the datagram
+  if (!g.netOut.tryWrite(f)) {     // UDP: a full ring drops the datagram (counted; logged with GUEST_DEBUG_NET)
+    const st = net(g); st.stats.outFull = (st.stats.outFull ?? 0) + 1;
+    if (st.dbg && st.log && (st.stats.outFull & (st.stats.outFull - 1)) === 0) st.log(`[net] OUT RING FULL x${st.stats.outFull}`);
+  }
 }
 
 // ---- sockaddr_in ----

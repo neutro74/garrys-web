@@ -81,7 +81,9 @@ async function boot({ env, cmdline, htmlRing, inputRing, audioRing, overlayBuffe
   // Voice chat: the page captures the microphone into micRing while the game records (steam.mjs voice calls).
   if (micRing) { g.micIn = new RingReader(micRing); g.voiceCapture = (on) => post({ type: 'voice', on }); }
   const { launchOptions } = await import('./launch-config.mjs');
-  const options = launchOptions({ saved: env.low === '1' ? false : saved, cmdline: env.mp === '1' ? `+sv_lan 1 ${cmdline}` : cmdline, res: env.res ?? '', win: env.win ?? '', scale: env.scale ?? '' });
+  // Multiplayer: the engine's queued-packet thread would send the rest of each split packet from a thread worker, which has no
+  // link to the network ring (those packets were silently lost and joins stalled); send from the main thread, 8 pieces a frame.
+  const options = launchOptions({ saved: env.low === '1' ? false : saved, cmdline: env.mp === '1' ? `+sv_lan 1 +net_queued_packet_thread 0 +net_splitrate 8 ${cmdline}` : cmdline, res: env.res ?? '', win: env.win ?? '', scale: env.scale ?? '' });
   g.cmdline = g.cstr(options.command);
 
   // With a renderPort, WebGL runs in web/render-worker.js (on the page's canvas); otherwise here, on an

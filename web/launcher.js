@@ -29,6 +29,14 @@ const EDITIONS = {
     blurb: (ext) => `Mounted: <b>${EDITIONS.extended.games.join(', ')}</b><br>Addons: ${EDITIONS.extended.addons.join(', ')}<br>${ext ? fmtSize(ext.bytes) + ' of extra content, ' : ''}streamed only as you play it.`,
   },
 };
+// The third news card: Garry's Web itself (not playable), with where to find the community and the author.
+const ABOUT = {
+  name: "Garry's Web", short: 'About Garry\'s Web', banner: true,
+  links: { server: 'https://discord.gg/PDPSqSKtT', profile: 'https://discordapp.com/users/827905760531841074' },
+  blurb: () => `Garry's Mod in your browser: build, play and chat together with nothing to install.<br>`
+    + `Community: <a href="${ABOUT.links.server}" target="_blank" rel="noopener">Join the Discord server</a><br>`
+    + `Made by <b>neutro74</b> · <a href="${ABOUT.links.profile}" target="_blank" rel="noopener">Discord profile</a>`,
+};
 const QUALITY = {
   // The engine always runs at the window size (or the resolution saved in Options), so menus, console and HUD stay
   // sharp; a preset only scales the 3D view (mat_viewportscale), which is where the GPU time goes.
@@ -521,7 +529,7 @@ function menu(ext, backdrop, opts = {}) {
     const warn = problems(), single = ids.length === 1, hub = new Hub();
     // Garry's Web is a fan project: say so, and whose the game is.
     const legal = `Garry's Web is an unofficial fan project, not affiliated with Facepunch Studios or Valve. ${ext ? "Garry's Mod and the bundled games belong to Facepunch Studios and Valve; addons belong to their Workshop authors." : "Garry's Mod belongs to Facepunch Studios and Valve."}`;
-    const extras = [['versions', 'Game Versions'], ['profile', 'Profile'], ['chat', 'Chat'], ['files', 'Your Files'], ['controls', 'Controls'], ['fullscreen', 'Fullscreen']].filter(([k]) => k !== 'chat' || hub.url);
+    const extras = [['about', 'About'], ['versions', 'Game Versions'], ['profile', 'Profile'], ['chat', 'Chat'], ['files', 'Your Files'], ['controls', 'Controls'], ['fullscreen', 'Fullscreen']].filter(([k]) => k !== 'chat' || hub.url);
 
     const page = document.createElement('div');
     page.className = 'page';
@@ -537,7 +545,7 @@ function menu(ext, backdrop, opts = {}) {
       </ul></div>
       <div class="side">
         <div class="news"><div class="news_item" data-news><div><span data-news-title></span><font data-news-text></font></div></div>
-          <div class="news_buttons">${ids.length > 1 ? [...ids].reverse().map((id) => `<div data-pager="${id}" title="${esc(EDITIONS[id].short)}"></div>`).join('') : ''}</div>
+          <div class="news_buttons">${[...ids, 'about'].reverse().map((id) => `<div data-pager="${id}" title="${esc((EDITIONS[id] ?? ABOUT).short)}"></div>`).join('')}</div>
           <div class="whatsnew"><div class="whatsnew_head"><img src="${game('html/img/whatsnew.png')}" alt="">What's new</div>
             <ul>${WHATS_NEW.map(([t, d]) => `<li><b>${esc(t)}</b> ${esc(d)}</li>`).join('')}</ul></div></div>
         <div class="panel" data-panel hidden></div>
@@ -560,9 +568,10 @@ function menu(ext, backdrop, opts = {}) {
     const showOnline = (n) => { if (onlineEl) onlineEl.textContent = n ? ` ${n} online` : ''; };
     if (onlineEl) hubStatus(hub.url).then((s) => showOnline(s?.online));
     hub.on('welcome', (m) => showOnline(m.online));
-    let panel = null, closePanel = null;
+    let panel = null, closePanel = null, card = edition;   // card: the news card shown (an edition, or 'about')
     const openPanel = (k) => {
       closePanel?.(); closePanel = null;
+      if (k === 'about') { if (panel) openPanel(panel); showCard('about'); return; }
       if (k === 'fullscreen') {
         if (document.fullscreenElement) document.exitFullscreen?.(); else document.documentElement.requestFullscreen?.().catch(() => {});
         return;
@@ -583,16 +592,19 @@ function menu(ext, backdrop, opts = {}) {
 
     const render = () => {
       for (const a of page.querySelectorAll('[data-ed]')) a.classList.toggle('cur', a.dataset.ed === edition);
-      for (const d of page.querySelectorAll('[data-pager]')) d.classList.toggle('selected', d.dataset.pager === edition);
-      const e = EDITIONS[edition];
-      $('[data-news]').style.backgroundImage = `url("${game(e.picture)}")`;
+      for (const d of page.querySelectorAll('[data-pager]')) d.classList.toggle('selected', d.dataset.pager === card);
+      for (const a of page.querySelectorAll('[data-open="about"]')) a.classList.toggle('cur', card === 'about');
+      const e = card === 'about' ? ABOUT : EDITIONS[card];
+      $('[data-news]').classList.toggle('banner', !!e.banner);
+      $('[data-news]').style.backgroundImage = `url("${e.banner ? brand('banner.png') : game(e.picture)}")`;
       $('[data-news-title]').textContent = e.name;
       $('[data-news-text]').innerHTML = e.blurb(ext);
       const q = QUALITY[quality];
       $('[data-gfx-label]').textContent = `Graphics: ${q.label}`;
       for (const li of popup.children) li.classList.toggle('active', li.dataset.q === quality);
     };
-    const setEdition = (id) => { if (id !== edition) { edition = id; store.set('edition', id); render(); } };
+    const setEdition = (id) => { if (id !== edition || card !== id) { edition = id; card = id; store.set('edition', id); render(); } };
+    const showCard = (id) => { if (id === 'about') { card = id; render(); } else setEdition(id); };
     const setQuality = (q) => { if (q !== quality) { quality = q; store.set('quality', q); render(); } };
     const qs = Object.keys(QUALITY), cycle = (d) => setQuality(qs[(qs.indexOf(quality) + d + qs.length) % qs.length]);
     let went = false;
@@ -611,7 +623,7 @@ function menu(ext, backdrop, opts = {}) {
       a.addEventListener('pointerenter', () => setEdition(a.dataset.ed));
       a.addEventListener('focus', () => setEdition(a.dataset.ed));
     }
-    for (const d of page.querySelectorAll('[data-pager]')) d.addEventListener('click', () => setEdition(d.dataset.pager));
+    for (const d of page.querySelectorAll('[data-pager]')) d.addEventListener('click', () => { if (panel) openPanel(panel); showCard(d.dataset.pager); });
     $('[data-gfx]').addEventListener('click', () => { popup.hidden = !popup.hidden; if (!popup.hidden) popup.querySelector('.active')?.focus(); });
     for (const li of popup.children) {
       const pick = () => { setQuality(li.dataset.q); popup.hidden = true; $('[data-gfx]').focus(); };

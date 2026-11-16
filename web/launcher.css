@@ -55,6 +55,13 @@ body { background: #000; }
   color: #fff; font-size: x-large; font-weight: bold; text-align: right; text-shadow: 2px 2px 1px #000; }
 #launcher .news_item font { display: block; font-size: small; font-weight: normal; text-shadow: 1px 1px 1px #000; line-height: 1.35; }
 #launcher .news_item font b { color: #ffa; font-weight: bold; }
+#launcher .news_item font a { color: #9df2ff; font-weight: bold; text-decoration: underline; text-underline-offset: 2px; }
+#launcher .news_item font a:hover { color: #ffa; }
+/* The About card: the whole Garry's Web banner across the top (1600x520, so 32.5% of the card's width tall) and the text on a
+   dark strip filling the rest; the banner already says the name, so the title is left out. */
+#launcher .news_item.banner { container-type: inline-size; background: #0b2f66 top / 100% auto no-repeat; }
+#launcher .news_item.banner > div { top: 32.5cqw; display: flex; flex-direction: column; justify-content: center; background: rgba(0,0,0,.25); }
+#launcher .news_item.banner [data-news-title] { display: none; }
 #launcher .news_buttons { display: flex; flex-direction: row-reverse; gap: 3px; margin-top: 3px; }
 #launcher .news_buttons div { width: 16px; height: 16px; background: #666; border-radius: 3px; box-shadow: 0 0 10px 1px rgba(0,0,0,.4); cursor: pointer; }
 #launcher .news_buttons div.selected { background: #eee; }

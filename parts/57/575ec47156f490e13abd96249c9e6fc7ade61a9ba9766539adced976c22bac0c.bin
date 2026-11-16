@@ -1,0 +1,5 @@
+"VertexLitGeneric" {
+  "$basetexture" "fork/tree_pine04_card"
+  "$nocull" 1
+  "$alphatest" 1
+}

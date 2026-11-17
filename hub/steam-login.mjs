@@ -91,8 +91,13 @@ export function createSteamLogin({ dir = path.join(process.env.WS_CACHE ?? './ws
       client.once('loggedOn', () => { clearTimeout(t); client.gamesPlayed([APP]); resolve(s); });
       client.once('error', (e) => {
         clearTimeout(t); live.delete(h);
-        if (/InvalidPassword|AccessDenied|Expired|Revoked/i.test(e.message)) fs.rmSync(file(key), { force: true });
-        reject(Object.assign(Error(`Steam sign-in failed (${e.message}). Sign in again.`), { status: 401 }));
+        // Only a login Steam no longer accepts means "signed out" (401: the page forgets its key). Anything else (Steam busy,
+        // the account playing elsewhere, a network error) is temporary: 503, and the page keeps its key and tries later.
+        if (/InvalidPassword|AccessDenied|Expired|Revoked/i.test(e.message)) {
+          fs.rmSync(file(key), { force: true });
+          return reject(Object.assign(Error(`Steam sign-in no longer works (${e.message}). Sign in again.`), { status: 401 }));
+        }
+        reject(Object.assign(Error(`Steam is not available right now (${e.message}). Try again in a minute.`), { status: 503 }));
       });
     });
     client.on('refreshToken', (t) => save(key, { ...data, refreshToken: t }));

@@ -54,20 +54,27 @@ async function verified(response, hash) {
   if (actual !== hash) throw Error(`CDN chunk integrity mismatch: ${hash}`);
   return bytes;
 }
-async function chunk(hash, base) {
+// Chunks are checked against their SHA-256 when they arrive from the network, before they are cached. Cached chunks are not hashed
+// again on every read: on a 2-core Chromebook that re-hashing of a few hundred MB each start cost more than the download it
+// saved. A cached chunk of the wrong size (the only damage seen in practice: a truncated write) is dropped and fetched again.
+const chunkKey = hash => new URL(`/__garrys_wasm_chunks_v1__/${hash}`, ROOT).href;
+const openCache = () => (cacheHandle ??= caches.open(CACHE_NAME).catch(error => { cacheHandle = undefined; throw error; }));
+async function forget(hash) { memory.delete(hash); try { await (await openCache()).delete(chunkKey(hash)); } catch { /* ignored */ } }
+async function chunk(hash, base, keep = true) {
   if (!/^[a-f0-9]{64}$/.test(hash)) throw Error('Invalid chunk hash');
   if (memory.has(hash)) { const bytes = memory.get(hash); remember(hash, bytes); return bytes; }
   if (pending.has(hash)) return pending.get(hash);
   const operation = (async () => {
-    // A stable same-origin synthetic URL shares verified disk chunks across refs.
-    const key = new URL(`/__garrys_wasm_chunks_v1__/${hash}`, ROOT).href;
+    // A stable same-origin synthetic URL shares disk chunks across refs.
+    const key = chunkKey(hash);
     let cache;
     try {
-      cache = await (cacheHandle ??= caches.open(CACHE_NAME).catch(error => { cacheHandle = undefined; throw error; }));
+      cache = await openCache();
       const hit = await cache.match(key);
       if (hit) {
-        try { const bytes = await verified(hit, hash); remember(hash, bytes); return bytes; }
-        catch { await cache.delete(key); }
+        const bytes = new Uint8Array(await hit.arrayBuffer());
+        if (bytes.byteLength) { if (keep) remember(hash, bytes); return bytes; }
+        await cache.delete(key);
       }
     } catch { /* Storage may be disabled, unavailable, or full. */ }
     // A blocked sync read in the engine cannot recover from a failed chunk, so ride out transient network, CDN and
@@ -78,7 +85,7 @@ async function chunk(hash, base) {
       try { bytes = await verified(await fetch(url, { mode: 'cors', credentials: 'omit' }), hash); break; }
       catch (error) { if (attempt >= 3) throw error; await new Promise(resolve => setTimeout(resolve, 300 * 2 ** attempt)); }
     }
-    remember(hash, bytes);
+    if (keep) remember(hash, bytes);
     if (cache) {
       try { await cache.put(key, new Response(bytes, { headers: { 'Content-Type': 'application/octet-stream' } })); } catch { /* Network data remains usable. */ }
     }
@@ -86,6 +93,19 @@ async function chunk(hash, base) {
   })();
   pending.set(hash, operation);
   try { return await operation; } finally { pending.delete(hash); }
+}
+// Prefetch only makes sure a chunk is on disk: one already cached is not read at all.
+async function ensureCached(hash, base) {
+  if (memory.has(hash) || pending.has(hash)) return;
+  try { if (await (await openCache()).match(chunkKey(hash))) return; } catch { /* no cache: fetch below keeps it in memory only */ }
+  await chunk(hash, base, false);
+}
+// A chunk read for the engine, checked for its expected size; a damaged cached copy is replaced once.
+async function chunkSized(hash, base, expected) {
+  let bytes = await chunk(hash, base);
+  if (bytes.byteLength !== expected) { await forget(hash); bytes = await chunk(hash, base); }
+  if (bytes.byteLength !== expected) throw Error('CDN chunk size mismatch');
+  return bytes;
 }
 function rangeFor(header, size) {
   if (header === null) return { start: 0, end: size - 1, partial: false };
@@ -124,10 +144,9 @@ function binaryResponse(request, file, index) {
         const last = Math.floor(range.end / index.chunkSize);
         for (let next = part + 1; next <= Math.min(last, part + READ_AHEAD); next++) chunk(file.chunks[next], binaryBase(index)).catch(() => {});
         demand++;
-        let bytes;
-        try { bytes = await chunk(file.chunks[part], binaryBase(index)); } finally { demand--; }
         const expected = Math.min(index.chunkSize, file.size - part * index.chunkSize);
-        if (bytes.byteLength !== expected) throw Error('CDN chunk size mismatch');
+        let bytes;
+        try { bytes = await chunkSized(file.chunks[part], binaryBase(index), expected); } finally { demand--; }
         const offset = position % index.chunkSize;
         const count = Math.min(bytes.byteLength - offset, range.end - position + 1);
         controller.enqueue(bytes.subarray(offset, offset + count));
@@ -163,7 +182,7 @@ async function prefetch(prefixes, warm, workers = PREFETCH_WORKERS) {
   await Promise.all(Array.from({ length: Math.max(1, Math.min(PREFETCH_WORKERS, workers | 0)) }, async (_, id) => {
     for (let hash; (hash = queue.shift());) {
       while (demand > 0 && id >= 2) await new Promise(resolve => setTimeout(resolve, 50));
-      await chunk(hash, base).catch(() => {});
+      await ensureCached(hash, base).catch(() => {});
     }
   }));
 }

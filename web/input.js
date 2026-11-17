@@ -22,6 +22,8 @@ export class GameInput {
   cursor(hidden){this.wantLock=hidden;if(!hidden&&document.pointerLockElement)document.exitPointerLock();this.canvas.style.cursor=hidden?'none':'';if(hidden)this.relock();}
   relock(){if(this.wantLock&&!document.pointerLockElement&&document.hasFocus()&&!document.hidden)this.lock();}
   handle(e,frame=null){
+    // The chat overlay (web/overlay.js) takes its hotkey and, while open, every event.
+    if(this.intercept?.(e,frame))return;
     if(e.editable||e.target?.closest?.('input,textarea,[contenteditable=true]'))return;
     if(e.type!=='pointermove'&&e.type!=='wheel')this.relock();
     if(e.type==='keydown'||e.type==='keyup'){const packet=keyPacket(e,e.type==='keydown');if(packet.vk){this.send(packet);e.preventDefault?.();}return;}

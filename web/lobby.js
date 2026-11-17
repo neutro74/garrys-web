@@ -2,11 +2,11 @@
 // The host lists its game; a joiner asks to join; the host's page answers with an invite (a WebRTC offer), the joiner's page
 // replies, and the host completes the link. The hub only relays those codes; game traffic is peer to peer.
 // Both ends live in the page (not the menu frame), so a game stays listed and joinable while the menu is closed.
-import { Hub } from './hub.js';
+import { sharedHub } from './hub.js';
 
 export class Lobby {
   constructor(p2p, { edition }) {
-    this.p2p = p2p; this.edition = edition; this.hub = new Hub(); this.lobbies = []; this.hosting = null; this.joining = null; this.note = '';
+    this.p2p = p2p; this.edition = edition; this.hub = sharedHub(); this.lobbies = []; this.hosting = null; this.joining = null; this.note = '';
     this.hub.on('lobbies', (m) => { this.listed = true; this.lobbies = m.lobbies.filter((l) => l.edition === edition && l.host !== this.hub.me?.id); });
     this.hub.on('hosting', (m) => { if (this.hosting) this.hosting.id = m.id; });
     this.hub.on('signal', (m) => this.signal(m.from, m.data ?? {}).catch((e) => { this.note = e.message; }));

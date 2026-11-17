@@ -39,7 +39,7 @@ const BRIDGE = (id, assetPrefix) => `<script>(() => {
   }
   for (const type of ['keydown','keyup','pointermove','pointerdown','pointerup','wheel']) addEventListener(type, e => {
     const event = {type,editable:!!e.target.closest?.('input,textarea,[contenteditable=true]')};
-    for(const key of ['code','key','ctrlKey','altKey','repeat','clientX','clientY','movementX','movementY','button','deltaY'])event[key]=e[key];
+    for(const key of ['code','key','ctrlKey','altKey','shiftKey','metaKey','repeat','clientX','clientY','movementX','movementY','button','deltaY'])event[key]=e[key];
     post({type:'native-input',event});
   }, {capture:true, passive:true});
   // GMod's pages check for the engine's browser (js/menu/common.js: IN_ENGINE) before calling into Lua.

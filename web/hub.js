@@ -36,7 +36,7 @@ export class Hub extends EventTarget {
     let ws;
     try { ws = new WebSocket(this.url); } catch { this.setState('offline'); return; }
     this.ws = ws;
-    ws.onopen = () => { this.retry = 0; this.send({ t: 'hello', name: this.name, device: playerId() }); };   // device: this browser's id, for moderation
+    ws.onopen = () => { this.retry = 0; this.send({ t: 'hello', name: this.name, device: playerId(), activity: this.activity }); };   // device: this browser's id, for moderation
     ws.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } this.message(m); };
     ws.onclose = () => {
       this.ws = null; this.me = null; if (!this.banned) this.setState('offline');
@@ -50,8 +50,9 @@ export class Hub extends EventTarget {
   message(m) {
     if (m.t === 'welcome') {
       const first = !this.me;
-      this.me = { id: m.id, name: m.name }; store.set('name', m.name);
+      this.me = { id: m.id, name: m.name, key: m.key }; store.set('name', m.name);
       this.online = m.online; this.roomList = m.rooms;
+      if (m.presence) this.presence = new Map(m.presence.map((p) => [p.user, p]));
       if (first) {
         this.setState('online');
         this.auth();
@@ -61,7 +62,11 @@ export class Hub extends EventTarget {
       }
     }
     if (m.t === 'rooms') { this.roomList = m.rooms; this.online = m.online; }
-    if (m.t === 'authed') this.account = m.user;
+    if (m.t === 'authed') { this.account = m.user; this.isAdmin = !!m.admin; this.myStatus = m.status ?? 'online'; if (this.me && m.user) this.me.key = 'a:' + m.user; }
+    if (m.t === 'my-status') this.myStatus = m.status;
+    if (m.t === 'presence') { (this.presence ??= new Map()); if (m.status === 'offline') this.presence.delete(m.user); else this.presence.set(m.user, m); }
+    if (m.t === 'presence-list') this.presence = new Map(m.users.map((p) => [p.user, p]));
+    if (m.t === 'friends') this.friends = m;
     // Banned by an admin (hub/admin.mjs): the hub closes the socket; trying again would only be refused.
     if (m.t === 'banned') { this.banned = m; this.closing = true; this.setState('banned'); }
     if (m.t === 'lobby-closed') this.lobby = null;
@@ -74,18 +79,31 @@ export class Hub extends EventTarget {
     if (a?.user && a?.token) this.send({ t: 'auth', user: a.user, token: a.token }); else this.account = null;
   }
   roomHistory(room, before) { return this.send({ t: 'room-history', room, before }); }
-  dm(to, text) { return this.send({ t: 'dm', to, text }); }
+  dm(to, text, extra = {}) { return this.send({ t: 'dm', to, text, ...extra }); }
   dms() { return this.send({ t: 'dms' }); }
   dmHistory(other, before) { return this.send({ t: 'dm-history', with: other, before }); }
   rename(name) { store.set('name', name); if (this.me) this.send({ t: 'nick', name }); }
   join(room) { this.rooms.add(room); this.send({ t: 'join', room }); }
   leave(room) { this.rooms.delete(room); this.send({ t: 'leave', room }); }
-  say(room, text) { return this.send({ t: 'say', room, text }); }
+  say(room, text, extra = {}) { return this.send({ t: 'say', room, text, ...extra }); }
+  // Changing a message: `where` is { room } for a channel or { with } for a private chat.
+  edit(where, id, text) { return this.send({ t: 'edit', ...where, id, text }); }
+  remove(where, id) { return this.send({ t: 'delete', ...where, id }); }
+  react(where, id, emoji, on = true) { return this.send({ t: 'react', ...where, id, emoji, on }); }
+  typing(where) { const now = Date.now(); if (now - (this.typedAt ?? 0) < 3000) return; this.typedAt = now; this.send({ t: 'typing', ...where }); }
+  friend(op, user) { return this.send({ t: op, user }); }   // friend-add, friend-accept, friend-remove, block, unblock
+  setStatus(status) { this.myStatus = status; return this.send({ t: 'status', status }); }
+  // What this page is doing (the launcher, a game, a map), shown to friends; resent after a reconnect.
+  setActivity(activity) { this.activity = activity; this.send({ t: 'activity', activity }); }
   watchLobbies(on = true) { this.watch = on; this.send({ t: 'watch-lobbies', on }); }
   host(lobby) { this.lobby = lobby; this.send({ t: 'host', lobby }); }
   unhost() { this.lobby = null; this.send({ t: 'unhost' }); }
   signal(to, data) { return this.send({ t: 'signal', to, data }); }
 }
+
+// One connection per page, shared by chat, friends, lobbies and the in-game overlay (the hub allows few per address).
+let shared = null;
+export function sharedHub() { if (!shared || shared.closing) shared = new Hub(); return shared; }
 
 // The hub's public status without opening a socket (for an "N online" line).
 export async function hubStatus(url = hubUrl()) {

@@ -65,7 +65,10 @@ export function createAccounts({ dir = path.join(process.env.WS_CACHE ?? './ws-c
       if (route === 'PUT /acct/me') {
         const b = await body(req);
         if (typeof b.doc !== 'object' || !b.doc) return json(res, 400, { error: 'No settings.' }, h), true;
-        s.a.doc = b.doc; s.a.updated = Date.now(); write(s.a);
+        // The Steam sign-in (web/steam-account.js) is kept when a browser that never had it sends its settings; signing out
+        // of Steam sends an explicit "out" entry instead, which does replace it.
+        const doc = { ...b.doc }; if (doc.steam == null && s.a.doc?.steam != null) doc.steam = s.a.doc.steam;
+        s.a.doc = doc; s.a.updated = Date.now(); write(s.a);
         return json(res, 200, { updated: s.a.updated }, h), true;
       }
       if (route === 'POST /acct/logout') { s.a.tokens = s.a.tokens.filter((t) => t.h !== s.h); write(s.a); return json(res, 200, {}, h), true; }

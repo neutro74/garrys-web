@@ -1,13 +1,13 @@
 // Admin panel (hub/admin.mjs): opened from the launcher's Admin entry, shown only to admin accounts. A full-window overlay in
 // the launcher's panel style with tabs for players, bans and mutes, chat, games, accounts, the hub itself, a terminal on
-// the Pi, and the audit log. Unlocking needs a code from the admin's authenticator app; the session lasts up to 8 hours
-// (1 hour idle) and is kept only in this tab (sessionStorage).
+// the Pi, and the audit log. Unlocking needs a code from the admin's authenticator app; the browser then stays unlocked
+// (localStorage) until Lock, or until the session is ended from the Hub tab of another unlocked browser.
 import { hubHttp } from './library.js';
 import { hubUrl } from './hub.js';
 import { account } from './account.js';
 
 const KEY = 'garrys-wasm.admin-token';
-const ss = { get: () => { try { return sessionStorage.getItem(KEY); } catch { return null; } }, set: (v) => { try { if (v) sessionStorage.setItem(KEY, v); else sessionStorage.removeItem(KEY); } catch { /* blocked */ } } };
+const ss = { get: () => { try { return localStorage.getItem(KEY); } catch { return null; } }, set: (v) => { try { if (v) localStorage.setItem(KEY, v); else localStorage.removeItem(KEY); } catch { /* blocked */ } } };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const ago = (t) => { if (!t) return '—'; const s = Math.max(0, (Date.now() - t) / 1000); return s < 60 ? `${s | 0}s ago` : s < 3600 ? `${(s / 60) | 0}m ago` : s < 86400 ? `${(s / 3600) | 0}h ago` : `${(s / 86400) | 0}d ago`; };
 const when = (t) => (t ? new Date(t).toLocaleString() : 'never');
@@ -181,7 +181,13 @@ export function openAdmin(root) {
           <tr><td>Pi</td><td>load ${s.load.map((x) => x.toFixed(2)).join(' ')} · ${size(s.sysMem.total - s.sysMem.free)} of ${size(s.sysMem.total)} used${s.temp ? ` · ${s.temp.toFixed(1)} °C` : ''} · up ${dur(s.sysUptime)}</td></tr>
         </table>
         <div class="row"><button class="btn danger" data-restart>Restart hub</button><span class="hint">Everyone reconnects by themselves within a few seconds.</span></div>
+        <h3>Unlocked admin browsers <small>${st.sessions.length}</small></h3>
+        <table class="grid"><tr><th>Browser</th><th>Unlocked</th><th>Last used</th><th></th></tr>${st.sessions.map((x) => `<tr><td><small>${esc(x.agent.replace(/^Mozilla\/5\.0 /, '') || '—')}</small><br><code>${esc(x.ip ?? '')}</code></td><td><small>${when(x.at)}</small></td><td><small>${ago(x.seen)}</small></td>
+          <td class="acts"><button class="btn" data-end="${esc(x.id)}">End</button></td></tr>`).join('')}</table>
+        <div class="row"><button class="btn danger" data-end-all>End every other session</button><span class="hint">Use this if you lose a device or unlocked a browser that is not yours. Ending this browser's session: Lock (top right).</span></div>
         <h3>Hub log</h3><pre class="logbox">${st.log.slice().reverse().map((l) => `<span class="${l.level}">${new Date(l.at).toLocaleTimeString()} ${esc(l.text)}</span>`).join('\n') || 'Nothing yet.'}</pre>`;
+      for (const b of body.querySelectorAll('[data-end]')) b.onclick = () => act('end-sessions', { id: b.dataset.end });
+      body.querySelector('[data-end-all]').onclick = () => { if (confirm('Lock every other browser that is unlocked as admin?')) act('end-sessions', {}); };
       body.querySelector('[data-restart]').onclick = () => { if (confirm('Restart the hub now?')) act('restart', {}, () => setTimeout(refresh, 4000)); };
     },
     audit() {

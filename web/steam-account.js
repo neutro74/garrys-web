@@ -8,7 +8,8 @@ export const BASE_ID = 76561197960265728n;
 export function steamAccount() {
   try { const a = JSON.parse(localStorage.getItem(K) ?? 'null'); return a && /^\d{17}$/.test(a.steamid) && a.key ? a : null; } catch { return null; }
 }
-const setAccount = (a) => { try { if (a) localStorage.setItem(K, JSON.stringify(a)); else localStorage.removeItem(K); } catch { /* blocked */ } };
+// Signed out is written as {"out":1} rather than removed, so the account's other browsers (web/account.js) sign out too.
+const setAccount = (a) => { try { localStorage.setItem(K, JSON.stringify(a ?? { out: 1 })); } catch { /* blocked */ } };
 // The 32-bit account id the game uses (steam.mjs builds the 64-bit SteamID from it).
 export const accountId = (a) => String(BigInt(a.steamid) - BASE_ID);
 

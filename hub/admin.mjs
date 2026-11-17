@@ -21,7 +21,8 @@ import { fileURLToPath } from 'node:url';
 const STATE_DIR = path.join(process.env.WS_CACHE ?? './ws-cache', 'admin');
 const ADMINS = new Set((process.env.ADMIN_USERS ?? 'neutro74').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean));
 const SSH_TARGET = process.env.ADMIN_SSH_TARGET ?? 'davidc@127.0.0.1';
-const SESSION_MAX = 8 * 3600e3, SESSION_IDLE = 3600e3;
+// An unlocked browser stays unlocked until Lock or 'End other sessions' (the user's choice); ADMIN_SESSION_DAYS limits it.
+const SESSION_MAX = +(process.env.ADMIN_SESSION_DAYS ?? 0) * 86400e3 || Infinity;
 const USER = /^[a-z0-9_]{3,20}$/;
 
 // ---- TOTP (RFC 6238: SHA-1, 6 digits, 30 s) -------------------------------------------------------------------------
@@ -58,7 +59,10 @@ export function createAdmin({ accounts, hub }) {
   fs.mkdirSync(path.join(STATE_DIR, 'totp'), { recursive: true, mode: 0o700 });
   const bans = jsonStore('bans.json', []), mutes = jsonStore('mutes.json', []);
   const auditFile = path.join(STATE_DIR, 'audit.jsonl');
-  const sessions = new Map();          // sha(token) -> {user, at, seen}
+  // Unlocked browsers, kept on disk so a hub restart does not lock them: sha(token) -> {user, at, seen, ip, agent}.
+  const sessionStore = jsonStore('sessions.json', {});
+  const sessions = { get: (h) => sessionStore.get()[h], set: (h, v) => sessionStore.set({ ...sessionStore.get(), [h]: v }), delete: (h) => { const o = { ...sessionStore.get() }; delete o[h]; sessionStore.set(o); }, all: () => Object.entries(sessionStore.get()) };
+  const SEEN_SAVE = 600e3;   // "last used" is written at most every 10 minutes
   const fails = new Map();             // user -> [timestamps] of wrong codes
   const lastCounter = new Map();       // user -> last accepted TOTP step (a code works once)
   const recent = [];                   // players seen lately (newest last)
@@ -97,8 +101,9 @@ export function createAdmin({ accounts, hub }) {
   const session = (token) => {
     if (!token) return null;
     const s = sessions.get(sha(token));
-    if (!s || now() - s.at > SESSION_MAX || now() - s.seen > SESSION_IDLE || !ADMINS.has(s.user)) { if (s) sessions.delete(sha(token)); return null; }
-    s.seen = now(); return s;
+    if (!s || now() - s.at > SESSION_MAX || !ADMINS.has(s.user)) { if (s) sessions.delete(sha(token)); return null; }
+    if (now() - s.seen > SEEN_SAVE) sessions.set(sha(token), { ...s, seen: now() });
+    return s;
   };
 
   const json = (res, code, obj, h) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...h }); res.end(JSON.stringify(obj)); };
@@ -133,6 +138,7 @@ export function createAdmin({ accounts, hub }) {
       log: logRing.slice(-200),
       audit: auditTail(),
       admins: [...ADMINS], sshTarget: SSH_TARGET,
+      sessions: sessions.all().map(([hh, x]) => ({ id: hh.slice(0, 12), user: x.user, at: x.at, seen: x.seen, ip: x.ip ?? null, agent: x.agent ?? '' })),
     };
   }
   const cpuTemp = () => { try { return +fs.readFileSync('/sys/class/thermal/thermal_zone0/temp', 'utf8') / 1000; } catch { return null; } };
@@ -159,6 +165,12 @@ export function createAdmin({ accounts, hub }) {
     restart(b, who) { setTimeout(() => { console.log(`admin: restart requested by ${who}`); process.exit(0); }, 300); return { restarting: true }; },   // systemd starts it again
   };
 
+  // End admin sessions: one (by id) or every one except the caller's.
+  actions['end-sessions'] = (b, who, me) => {
+    let n = 0;
+    for (const [hh] of sessions.all()) if (hh !== me && (!b.id || hh.startsWith(String(b.id)))) { sessions.delete(hh); n++; }
+    return { ended: n };
+  };
   const handle = async (req, res, { ip, headers = {} }) => {
     const url = new URL(req.url, 'http://x');
     if (!url.pathname.startsWith('/admin/')) return false;
@@ -177,9 +189,9 @@ export function createAdmin({ accounts, hub }) {
         if (!verifyCode(u, String(b.code ?? '').replace(/\s/g, ''))) { fails.set(u, [...f, now()]); audit(u, 'unlock-failed', { ip }); return json(res, 401, { error: 'Wrong code.' }, h), true; }
         fails.delete(u);
         const token = crypto.randomBytes(32).toString('base64url');
-        sessions.set(sha(token), { user: u, at: now(), seen: now() });
+        sessions.set(sha(token), { user: u, at: now(), seen: now(), ip, agent: String(req.headers['user-agent'] ?? '').slice(0, 160) });
         audit(u, 'unlock', { ip });
-        return json(res, 200, { token, expires: now() + SESSION_MAX }, h), true;
+        return json(res, 200, { token, expires: Number.isFinite(SESSION_MAX) ? now() + SESSION_MAX : 0 }, h), true;
       }
       const s = session(req.headers['x-admin']);
       if (!s) return json(res, 401, { error: 'Admin session expired. Unlock again.' }, h), true;
@@ -187,7 +199,7 @@ export function createAdmin({ accounts, hub }) {
       if (route === 'state' && req.method === 'GET') return json(res, 200, state(), h), true;
       const act = actions[route];
       if (!act || req.method !== 'POST') return json(res, 404, { error: 'No such admin action.' }, h), true;
-      const b = await body(req), r = act(b, s.user);
+      const b = await body(req), r = act(b, s.user, sha(req.headers['x-admin']));
       audit(s.user, route, { ip, ...b });
       return json(res, 200, r, h), true;
     } catch (e) { json(res, 400, { error: String(e.message ?? e) }, h); }

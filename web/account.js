@@ -4,7 +4,8 @@
 // A new account takes over this browser's settings; signing in to an existing one replaces them with the account's.
 import { hubHttp } from './library.js';
 
-const KEYS = ['name', 'playercolor', 'playercolor-hex', 'steamid', 'versions', 'library', 'disabled-addons', 'edition', 'quality', 'chat-room'];
+// 'steam' is the Steam sign-in's key (web/steam-account.js): with it, every browser on the account can join real servers.
+const KEYS = ['name', 'playercolor', 'playercolor-hex', 'steamid', 'versions', 'library', 'disabled-addons', 'edition', 'quality', 'chat-room', 'steam'];
 const P = 'garrys-wasm.';
 const ls = {
   get(k) { try { return localStorage.getItem(P + k); } catch { return null; } },
@@ -14,7 +15,8 @@ export const account = () => { try { return JSON.parse(ls.get('account') ?? 'nul
 const saveAccount = (a) => ls.set('account', a ? JSON.stringify(a) : null);
 const snapshot = () => Object.fromEntries(KEYS.map((k) => [k, ls.get(k)]).filter(([, v]) => v !== null));
 const digest = (o) => JSON.stringify(o);
-function apply(doc) { for (const k of KEYS) ls.set(k, doc?.[k] ?? null); }
+// A Steam sign-in missing from the account's copy leaves this browser's own in place (see hub/accounts.mjs).
+function apply(doc) { for (const k of KEYS) if (k !== 'steam' || doc?.steam != null) ls.set(k, doc?.[k] ?? null); }
 
 async function api(path, { method = 'GET', body, auth = true } = {}) {
   const base = hubHttp(), a = account();

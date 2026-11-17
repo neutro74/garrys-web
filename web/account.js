@@ -14,7 +14,9 @@ const ls = {
 export const account = () => { try { return JSON.parse(ls.get('account') ?? 'null'); } catch { return null; } };
 const saveAccount = (a) => ls.set('account', a ? JSON.stringify(a) : null);
 const snapshot = () => Object.fromEntries(KEYS.map((k) => [k, ls.get(k)]).filter(([, v]) => v !== null));
-const digest = (o) => JSON.stringify(o);
+// 'v2:' makes every browser send its settings once: before v43, a browser that pulled marked a Steam sign-in the account
+// lacked as already sent.
+const digest = (o) => 'v2:' + JSON.stringify(o);
 // What the account itself holds, in the same form as snapshot(). After pulling, this (not this browser's settings) is what
 // counts as synced, so anything only this browser has (a Steam sign-in the account lacks) is sent on the next push.
 const docSnap = (doc) => Object.fromEntries(KEYS.map((k) => [k, doc?.[k] ?? null]).filter(([, v]) => v !== null));

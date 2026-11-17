@@ -61,12 +61,21 @@ export async function downloadWorkshop(id, { title, onProgress = () => {} } = {}
   id = String(id);
   if (!/^\d{1,20}$/.test(id)) throw Error('Not a Workshop item id');
   const name = wsName(id);
+  // The hub can restart or the connection blip while a long download runs: connection errors and busy answers are retried
+  // for about a minute, and a download the hub no longer knows about (it restarted) is asked for again.
+  let failures = 0, restarts = 0, post = true;
   for (let i = 0; ; i++) {
-    const st = await hubJson(`ws/fetch/${id}`, { method: i ? 'GET' : 'POST' });
+    let st;
+    try { st = await hubJson(`ws/fetch/${id}`, { method: post ? 'POST' : 'GET' }); failures = 0; post = false; }
+    catch (e) {
+      if ((e.status && ![502, 503, 504].includes(e.status)) || ++failures > 30) throw e;
+      onProgress({ phase: 'reconnecting', loaded: 0, total: 0, position: 0 });
+      await new Promise((r) => setTimeout(r, 2000)); continue;
+    }
     onProgress({ phase: st.state, loaded: 0, total: st.size ?? 0, position: st.position ?? 0 });
     if (st.state === 'ready') break;
     if (st.state === 'error') throw Error(st.error || 'The download failed.');
-    if (st.state === 'none' && i) throw Error('The download was dropped. Try again.');
+    if (st.state === 'none' && i) { if (++restarts > 3) throw Error('The download was dropped. Try again.'); post = true; continue; }
     if (i > 1800) throw Error('The download is taking too long.');
     await new Promise((r) => setTimeout(r, i < 5 ? 1000 : 2000));
   }

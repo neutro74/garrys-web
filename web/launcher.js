@@ -521,7 +521,7 @@ async function fetchVersionAddons(v) {
     const label = a.title || `item ${a.id}`;
     try {
       await downloadWorkshop(a.id, { title: a.title, onProgress: (p) => {
-        statusEl.textContent = `Downloading addons... (${i}/${missing.length}) ${label}${p.phase === 'transferring' && p.total ? ` ${Math.floor((100 * p.loaded) / p.total)}%` : p.phase === 'queued' ? ' (waiting)' : p.phase === 'downloading' ? ' (fetching from Steam)' : ''}`;
+        statusEl.textContent = `Downloading addons... (${i}/${missing.length}) ${label}${p.phase === 'transferring' && p.total ? ` ${Math.floor((100 * p.loaded) / p.total)}%` : p.phase === 'queued' ? ' (waiting)' : p.phase === 'downloading' ? ' (fetching from Steam)' : p.phase === 'reconnecting' ? ' (reconnecting)' : ''}`;
       } });
     } catch (e) { console.warn(`[versions] ${label}: ${e.message}`); }
   }

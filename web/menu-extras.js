@@ -152,7 +152,8 @@ async function addonsSidebar(page, ul) {
       status.textContent = p.phase === 'queued' ? `${d.title}: waiting for the download service${p.position > 1 ? ` (#${p.position})` : ''}…`
         : p.phase === 'downloading' || p.phase === 'preparing' ? `${d.title}: the service is fetching it from Steam…`
         : p.phase === 'transferring' ? `${d.title}: downloading ${p.total ? Math.floor((100 * p.loaded) / p.total) + '%' : niceSize(p.loaded)}`
-        : p.phase === 'installing' ? `${d.title}: installing…` : status.textContent;
+        : p.phase === 'installing' ? `${d.title}: installing…`
+        : p.phase === 'reconnecting' ? `${d.title}: lost the download service for a moment, reconnecting…` : status.textContent;
     }, 700);
     try {
       const name = await host('workshop-install', { id: d.id, title: d.title });

@@ -4,7 +4,13 @@
 // Both screens copy the game's own pages (main menu: html/template/main.html; loading: html/loading.html) and use
 // their stock images, so the launcher looks like the game it starts and nothing extra ships.
 
-import { Hub, hubStatus, playerId } from './hub.js';
+import { sharedHub, hubStatus, playerId } from './hub.js';
+import { mountChat, chatStyles, STATUS } from './chat-app.js';
+import { myProfile, saveProfile, uploadImage, removeImage, resizeImage, avatarEl, imageUrl, displayName, nameHue, getProfile } from './profiles.js';
+import { prepareGameDir, syncCloud, gameDirName, stopWrites } from './cloud-sync.js';
+import { listSaves, saveEntries, deleteSave, writeSaveEntries } from './local-saves.js';
+import { shareSave, shareInfo, fetchShare, listShares, saveLink, shareThumb } from './save-share.js';
+import { encodeBackup } from './storage.js';
 import { account, login, register, logout, changePassword, sync, autoSync } from './account.js';
 import { steamBox, steamAccount } from './steam-account.js';
 import { launchAddons, versions, getVersion, putVersion, removeVersion, newVersionId, libraryMeta, hasFile, downloadWorkshop, workshopDetails, hubJson, hubHttp, impact, shareVersion, fetchSharedVersion, wsName } from './library.js';
@@ -130,20 +136,17 @@ async function extendedInfo() {
 // open panels in the card's place (chat, the files this browser keeps, controls). The bottom strip is its NavBar,
 // with the graphics preset where the game has its gamemode chooser.
 const WHATS_NEW = [
-  ['Real servers', 'Sign in with Steam from Profile to join regular Garry\'s Mod servers in Find Multiplayer Game.'],
-  ['Multiplayer', 'Start New Game with more than one player and friends find your game in the server list.'],
-  ['Private chats', 'Message other players one to one from Chat; messages are kept.'],
-  ['Discord', 'Join the community server from About.'],
-  ['Game Versions', 'Make your own setup: an edition plus any Workshop addons. Share it as a link.'],
+  ['Chat, rebuilt', 'Channels, private messages, replies, reactions, pictures, mentions and edits. Press Shift+Tab in game to chat without leaving it.'],
+  ['Friends', 'Add friends, see who is online and what they are playing, and message them from anywhere.'],
+  ['Profiles', 'A picture, banner, name colour, about me and status, shown to everyone in chat.'],
+  ['Saves everywhere', 'Signed in, your saves, dupes and game settings follow your account. Continue picks up your latest save.'],
+  ['Share saves', 'Share any save as a link, or play what others shared, from Saves here or in game.'],
 ]
 const CONTROLS = [
   ['W A S D', 'Move'], ['Space / Ctrl', 'Jump / crouch'], ['Shift', 'Sprint'], ['Q (hold)', 'Spawn menu'], ['C (hold)', 'Context menu'],
   ['E', 'Use'], ['F', 'Flashlight'], ['Z', 'Undo'], ['Mouse 1 / 2', 'Fire / alt fire, physgun grab / freeze'], ['Mouse wheel', 'Switch weapon'],
   ['Esc', 'Game menu (also releases the mouse)'], ['~', 'Console'], ['F11', 'Browser fullscreen'],
 ];
-const ROOMS = [['general', 'General'], ['help', 'Help'], ['looking-for-game', 'Find a game'], ['off-topic', 'Off-topic']];
-const nameColor = (s) => `hsl(${[...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % 360} 70% 38%)`;
-const clock = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
 // Everything this browser keeps for the game: saves and addons in OPFS (written by storage-worker.js) and the downloaded
 // game files in the service worker's cache.
@@ -151,7 +154,7 @@ async function opfsFiles() {
   const out = [];
   const walk = async (dir, p) => { for await (const [name, h] of dir.entries()) { if (h.kind === 'directory') await walk(h, `${p}/${name}`); else out.push({ path: `${p}/${name}`, size: (await h.getFile()).size }); } };
   const root = await navigator.storage.getDirectory();
-  try { await walk(await root.getDirectoryHandle('garrys-wasm'), ''); } catch { /* nothing stored yet */ }
+  try { await walk(await root.getDirectoryHandle(gameDirName()), ''); } catch { /* nothing stored yet */ }
   // The addon library (library.js) lives beside it; its files count as addons.
   try { await walk(await root.getDirectoryHandle('garrys-wasm-library'), '/library'); } catch { /* none */ }
   return out;
@@ -228,18 +231,40 @@ function accountBox(box, onChange) {
   box.querySelector('[data-auth]').onsubmit = (e) => { e.preventDefault(); go(login, (u) => `Signed in as ${u}.`); };
   box.querySelector('[data-register]').onclick = () => go(register, (u) => `Account ${u} created with this browser's settings.`);
 }
+// Profile: the public profile other players see (picture, banner, display name, about me, status...) for accounts, then the
+// in-game name and player colour, then the account and Steam sign-ins. A preview card shows the profile as chat will.
+function previewCard(p, status) {
+  const wrap = document.createElement('div'); wrap.className = 'gwc pf-preview';
+  const card = document.createElement('div'); card.className = 'gwc-card';
+  const banner = document.createElement('div'); banner.className = 'gwc-banner';
+  if (p.bannerImg) banner.style.backgroundImage = `url("${imageUrl(p.bannerImg)}")`; else banner.style.background = p.banner || p.accent || `hsl(${nameHue(p.user)} 35% 30%)`;
+  const av = document.createElement('span'); av.className = 'gwc-av gwc-cardav'; av.append(avatarEl(p, p.user, 80));
+  const dot = document.createElement('i'); dot.className = `gwc-dot s-${status === 'invisible' ? 'offline' : status}`; av.append(dot);
+  const body = document.createElement('div'); body.className = 'gwc-cardbody';
+  body.innerHTML = `<h3></h3><div class="gwc-handle"></div>${p.custom?.text || p.custom?.emoji ? '<div class="gwc-custom"></div>' : ''}${p.bio ? '<div class="gwc-sect">About me</div><p class="pf-bio"></p>' : ''}`;
+  body.querySelector('h3').textContent = displayName(p, p.user);
+  body.querySelector('.gwc-handle').textContent = `@${p.user}${p.pronouns ? ' · ' + p.pronouns : ''}`;
+  if (body.querySelector('.gwc-custom')) body.querySelector('.gwc-custom').textContent = `${p.custom.emoji ?? ''} ${p.custom.text ?? ''}`.trim();
+  if (p.bio) body.querySelector('.pf-bio').textContent = p.bio;
+  card.append(banner, av, body); wrap.append(card);
+  return wrap;
+}
 function profilePanel(el, hub, onAccount = () => {}) {
-  const color = store.get('playercolor-hex', '');
+  const color = store.get('playercolor-hex', ''), signedIn = !!account();
+  chatStyles();
   el.innerHTML = `<div class="panel-head"><img src="${game('html/img/play.png')}" alt=""><span>Profile</span><a href="#" class="x" data-close title="Close">✕</a></div>
     <div class="panel-body">
-      ${hubHttp() ? '<div data-account></div><div data-steam></div>' : ''}
+      ${hubHttp() ? '<div data-account></div>' : ''}
+      ${signedIn ? `<div class="pf" data-pf><p class="hint">Loading your profile…</p></div>` : ''}
+      <h4 class="pf-h">In game</h4>
       <label class="field"><span>Name</span><input data-name maxlength="24" autocomplete="nickname" spellcheck="false"></label>
-      <p class="hint">Shown to other players in chat and in multiplayer games. 2 to 24 characters.</p>
+      <p class="hint">Your name in multiplayer games${signedIn ? '' : ' and in chat'}. 2 to 24 characters.</p>
       <div class="field"><span>Player colour</span><div class="swatches" role="radiogroup">${COLORS.map(([h, n]) => `<button type="button" role="radio" title="${n}" data-color="${h}" style="background:${h}"></button>`).join('')}
         <button type="button" role="radio" class="none" title="Keep the game's setting" data-color="">–</button></div></div>
       <p class="hint">Your player model, skin and weapon colour are chosen in game: hold <kbd>C</kbd> and pick <b>Player Model</b>.</p>
       <table class="facts"><tr><td>Player ID</td><td data-id></td></tr></table>
       <div class="row"><button class="btn-primary" data-save>Save</button></div><p class="hint" data-msg></p>
+      ${hubHttp() ? '<div data-steam></div>' : ''}
     </div>`;
   const $ = (q) => el.querySelector(q), input = $('[data-name]'), msg = $('[data-msg]');
   input.value = store.get('name', '') || hub.name;
@@ -258,160 +283,153 @@ function profilePanel(el, hub, onAccount = () => {}) {
   };
   $('[data-save]').addEventListener('click', save);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
-  // Signing in or out changes the settings shown here (the account's replace this browser's): redraw.
   const steamEl = $('[data-steam]');
   if (steamEl) steamBox(steamEl, esc);
+  // Signing in or out changes the settings shown here (the account's replace this browser's): redraw.
   const box = $('[data-account]');
   if (box) accountBox(box, () => { onAccount(); profilePanel(el, hub, onAccount); el.querySelector('[data-close]')?.addEventListener('click', (ev) => { ev.preventDefault(); onAccount('close'); }); });
-  if (!account()) setTimeout(() => input.focus(), 50);
+  if (!account()) { setTimeout(() => input.focus(), 50); return; }
+  const pf = $('[data-pf]');
+  myProfile().then((p) => publicProfile(pf, p, hub)).catch((e) => { pf.innerHTML = `<p class="hint"></p>`; pf.querySelector('p').textContent = e.message; });
 }
-// Chat: the public rooms (kept on the hub, older messages load when scrolling up) and Private: one-to-one messages between
-// Garry's Web accounts. Clicking a signed-in player's name in a room opens a private chat with them.
-function chatPanel(el, hub) {
-  el.innerHTML = `<div class="panel-head"><img src="${game('html/img/news.png')}" alt=""><span>Chat</span><small data-state></small><a href="#" class="x" data-close title="Close">✕</a></div>
-    <div class="tabs" role="tablist">${ROOMS.map(([id, label]) => `<button role="tab" data-room="${id}">${label}<small data-count></small></button>`).join('')}<button role="tab" data-room="@private">Private</button></div>
-    <div class="dmhead" data-dmhead hidden></div>
-    <div class="log" data-log aria-live="polite"></div>
-    <form class="say" data-say autocomplete="off">
-      <input data-name maxlength="24" aria-label="Your name" title="Your name (click to change)">
-      <input data-to maxlength="20" placeholder="Username" aria-label="Send to" hidden spellcheck="false">
-      <input data-text maxlength="400" placeholder="Say something…" aria-label="Message">
-      <button class="btn-primary">Send</button></form>`;
-  const $ = (q) => el.querySelector(q), log = $('[data-log]'), text = $('[data-text]'), nameIn = $('[data-name]'), toIn = $('[data-to]'), stateEl = $('[data-state]'), dmHead = $('[data-dmhead]');
-  const logs = new Map(ROOMS.map(([id]) => [id, []])), done = new Map(), users = new Map();
-  const dmLogs = new Map(), dmDone = new Map(), unreadDm = new Set();
-  let convos = [], peer = null, loadingOlder = false;
-  let room = store.get('chat-room', 'general'); if (!logs.has(room) && room !== '@private') room = 'general';
-  const priv = () => room === '@private';
-  const line = (m) => {
-    const d = document.createElement('div');
-    if (m.sys) { d.className = 'sys'; d.textContent = m.sys; return d; }
-    const t = document.createElement('time'), n = document.createElement('b'), s = document.createElement('span');
-    const name = m.t === 'dm' ? (m.from === hub.account ? 'You' : m.from) : m.from.name;
-    t.textContent = clock(m.at); n.textContent = name; n.style.color = nameColor(name); s.textContent = m.text;
-    if (m.t !== 'dm' && m.from.account && m.from.account !== hub.account) { n.classList.add('who'); n.title = `Private chat with ${m.from.account}`; n.onclick = () => openDm(m.from.account); }
-    if (m.t === 'dm' ? m.from === hub.account : hub.me && m.from.id === hub.me.id) d.className = 'mine';
-    d.append(t, n, s); return d;
-  };
-  const atBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < 40;
-  const add = (r, m) => {
-    const list = logs.get(r); if (!list) return;
-    if (!list.length && r === room) log.replaceChildren();   // the room's empty-room note goes once something is said
-    list.push(m);
-    if (r === room) { const near = atBottom(); log.append(line(m)); if (near) log.scrollTop = log.scrollHeight; }
-    else el.querySelector(`[data-room="${r}"]`)?.classList.add('unread');
-  };
-  const tabs = () => {
-    for (const b of el.querySelectorAll('[data-room]')) {
-      const on = b.dataset.room === room; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); if (on && !priv()) b.classList.remove('unread');
-      const c = b.querySelector('[data-count]'); if (c) c.textContent = users.has(b.dataset.room) ? ` ${users.get(b.dataset.room).size}` : '';
-    }
-    el.querySelector('[data-room="@private"]').classList.toggle('unread', unreadDm.size > 0);
-  };
-  const show = () => {
-    tabs();
-    nameIn.hidden = priv(); toIn.hidden = !(priv() && !peer && hub.account);
-    if (!priv()) {
-      dmHead.hidden = true;
-      const list = logs.get(room);
-      log.replaceChildren(...(list.length ? list : [{ sys: `This is #${ROOMS.find(([id]) => id === room)[1]}. Messages are public and kept; be nice.` }]).map(line)); log.scrollTop = log.scrollHeight;
-      log.title = users.has(room) ? `Here: ${[...users.get(room).values()].join(', ')}` : '';
-    } else if (!hub.account) {
-      dmHead.hidden = true;
-      log.replaceChildren(line({ sys: 'Private chats are between Garry\'s Web accounts. Sign in or create one in Profile, then come back here.' }));
-    } else if (!peer) {
-      dmHead.hidden = true; log.title = '';
-      log.replaceChildren(...(convos.length ? [] : [line({ sys: 'No private chats yet. Type a username below to start one, or click a name in a room.' })]));
-      for (const c of convos) {
-        const row = document.createElement('div'); row.className = 'convo' + (unreadDm.has(c.with) ? ' unread' : '');
-        const n = document.createElement('b'), s = document.createElement('span'), t = document.createElement('time');
-        n.textContent = c.with; n.style.color = nameColor(c.with); s.textContent = (c.last.from === hub.account ? 'You: ' : '') + c.last.text; t.textContent = clock(c.last.at);
-        if (c.online) n.title = 'Online';
-        row.append(n, s, t); row.onclick = () => openDm(c.with); log.append(row);
-      }
-    } else {
-      dmHead.hidden = false;
-      dmHead.innerHTML = `<a href="#" data-back>‹ Private chats</a> <b></b>`; dmHead.querySelector('b').textContent = peer;
-      dmHead.querySelector('[data-back]').onclick = (ev) => { ev.preventDefault(); peer = null; hub.dms(); show(); };
-      const list = dmLogs.get(peer) ?? [];
-      log.replaceChildren(...(list.length ? list : [{ sys: dmLogs.has(peer) ? `Start your private chat with ${peer}. Only the two of you can read it.` : 'Loading…' }]).map(line)); log.scrollTop = log.scrollHeight;
-    }
-    state(hub.state);
-  };
-  function openDm(who) {
-    room = '@private'; peer = who; unreadDm.delete(who); store.set('chat-room', room);
-    if (!dmLogs.has(who)) hub.dmHistory(who);
-    show(); text.focus();
+function publicProfile(pf, p, hub) {
+  let cur = structuredClone(p);
+  pf.innerHTML = `<h4 class="pf-h">Your profile <small>what other players see in chat</small></h4>
+    <div class="pf-grid"><div data-preview></div><div class="pf-fields">
+      <div class="field"><span>Picture</span><div class="row"><button class="btn" type="button" data-up="avatar">Upload…</button><button class="btn" type="button" data-rm="avatar">Remove</button></div></div>
+      <div class="field"><span>Banner</span><div class="row"><input type="color" data-k="banner" title="Banner colour"><button class="btn" type="button" data-up="banner">Image…</button><button class="btn" type="button" data-rm="banner">Remove</button></div></div>
+      <div class="field"><span>Name colour</span><div class="row"><input type="color" data-k="accent" title="Colour of your name in chat"><button class="btn" type="button" data-clear="accent">Default</button></div></div>
+      <label class="field"><span>Status</span><select data-k="status">${['online', 'idle', 'dnd', 'invisible'].map((x) => `<option value="${x}">${STATUS[x][0]}</option>`).join('')}</select></label>
+    </div></div>
+    <label class="field"><span>Display name</span><input data-k="display" maxlength="32" placeholder="${esc(p.user)}"></label>
+    <label class="field"><span>Pronouns</span><input data-k="pronouns" maxlength="24" placeholder="optional"></label>
+    <div class="field"><span>Custom status</span><div class="row pf-custom"><input data-k="custom.emoji" maxlength="8" placeholder="🙂" class="pf-emoji"><input data-k="custom.text" maxlength="64" placeholder="What are you up to?"></div></div>
+    <label class="field top"><span>About me</span><textarea data-k="bio" maxlength="300" rows="3" placeholder="A few words about yourself"></textarea></label>
+    <label class="field"><span>Favourite</span><input data-k="favorite" maxlength="48" placeholder="Map, gamemode or addon"></label>
+    <label class="field top"><span>Links</span><textarea data-k="links" rows="2" placeholder="Up to 4 https:// links, one per line"></textarea></label>
+    <div class="row"><button class="btn-primary" type="button" data-pfsave>Save profile</button><span class="hint" data-pfmsg></span></div>`;
+  const $ = (q) => pf.querySelector(q), msg = $('[data-pfmsg]');
+  const get = (k) => k.split('.').reduce((o, x) => o?.[x], cur);
+  const preview = () => $('[data-preview]').replaceChildren(previewCard(cur, cur.status));
+  for (const f of pf.querySelectorAll('[data-k]')) {
+    const k = f.dataset.k, v = get(k);
+    f.value = k === 'links' ? (cur.links ?? []).join('\n') : f.type === 'color' ? (v || '#5865f2') : v ?? '';
+    f.addEventListener('input', () => {
+      const val = f.value;
+      if (k === 'links') cur.links = val.split('\n').map((x) => x.trim()).filter(Boolean);
+      else if (k.startsWith('custom.')) cur.custom = { ...(cur.custom ?? {}), [k.slice(7)]: val };
+      else cur[k] = val;
+      preview();
+    });
   }
-  const state = (s) => {
-    stateEl.textContent = { connecting: 'connecting…', online: hub.online ? `${hub.online} online` : 'online', offline: 'offline, retrying…', off: '', banned: 'banned' }[s] ?? '';
-    const ok = s === 'online' && (!priv() || !!hub.account);
-    text.disabled = !ok;
-    text.placeholder = s === 'off' ? 'Chat is not set up for this copy of the game.' : s === 'banned' ? 'You are banned from chat.' : s !== 'online' ? 'Connecting to chat…'
-      : priv() ? (!hub.account ? 'Sign in (Profile) for private chats' : peer ? `Message ${peer}` : 'Message') : `Message #${ROOMS.find(([id]) => id === room)[1]}`;
+  for (const b of pf.querySelectorAll('[data-clear]')) b.onclick = () => { cur[b.dataset.clear] = ''; preview(); };
+  const wrap = async (fn) => { msg.textContent = 'Saving…'; try { const p2 = await fn(); cur = { ...cur, avatar: p2.avatar, bannerImg: p2.bannerImg }; msg.textContent = 'Saved.'; preview(); } catch (e) { msg.textContent = e.message; } };
+  for (const b of pf.querySelectorAll('[data-up]')) b.onclick = () => {
+    const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*';
+    i.onchange = () => i.files[0] && wrap(async () => {
+      const kind = b.dataset.up, { blob } = await resizeImage(i.files[0], kind === 'avatar' ? { w: 256, h: 256, keepGifUnder: 500 * 1024 } : { w: 960, h: 320, keepGifUnder: 1.4 * 1048576 });
+      return uploadImage(kind, blob);
+    });
+    i.click();
   };
-  // Scrolling to the top loads older messages (rooms and private chats are both kept on the hub).
-  log.addEventListener('scroll', () => {
-    if (log.scrollTop > 20 || loadingOlder) return;
-    if (!priv()) { const list = logs.get(room); if (!list?.length || done.get(room)) return; loadingOlder = true; hub.roomHistory(room, list[0].at); }
-    else if (peer) { const list = dmLogs.get(peer); if (!list?.length || dmDone.get(peer)) return; loadingOlder = true; hub.dmHistory(peer, list[0].at); }
-  });
-  const prepend = (list, older) => {
-    const h = log.scrollHeight; list.unshift(...older); show(); log.scrollTop = log.scrollHeight - h;
+  for (const b of pf.querySelectorAll('[data-rm]')) b.onclick = () => wrap(() => removeImage(b.dataset.rm));
+  $('[data-pfsave]').onclick = async () => {
+    msg.textContent = 'Saving…';
+    try {
+      const saved = await saveProfile({ display: cur.display ?? '', pronouns: cur.pronouns ?? '', accent: cur.accent ?? '', banner: cur.banner ?? '', status: cur.status, bio: cur.bio ?? '',
+        custom: cur.custom ?? null, favorite: cur.favorite ?? '', links: cur.links ?? [] });
+      cur = structuredClone(saved); hub.myStatus = saved.status; msg.textContent = 'Saved. Everyone in chat sees it now.'; preview();
+    } catch (e) { msg.textContent = e.message; }
   };
-  const offs = [
-    hub.on('state', state),
-    hub.on('welcome', (m) => { nameIn.value = m.name; state('online'); }),
-    hub.on('authed', () => { if (hub.account) hub.dms(); show(); }),
-    hub.on('room', (m) => { users.set(m.room, new Map(m.users.map((u) => [u.id, u.name]))); logs.set(m.room, m.history.slice()); done.set(m.room, m.history.length < 100); if (m.room === room) show(); else tabs(); }),
-    hub.on('room-history', (m) => { loadingOlder = false; done.set(m.room, m.done); if (m.messages.length && logs.has(m.room)) { if (m.room === room) prepend(logs.get(m.room), m.messages); else logs.get(m.room).unshift(...m.messages); } }),
-    hub.on('joined', (m) => { users.get(m.room)?.set(m.user.id, m.user.name); tabs(); }),
-    hub.on('left', (m) => { users.get(m.room)?.delete(m.user.id); tabs(); }),
-    hub.on('nick', (m) => { users.get(m.room)?.set(m.user.id, m.user.name); if (m.old !== m.user.name) add(m.room, { sys: `${m.old} is now ${m.user.name}` }); }),
-    hub.on('msg', (m) => add(m.room, m)),
-    // Moderation (hub/admin.mjs): a removed message, a cleared room, an announcement, a ban or kick.
-    hub.on('msg-deleted', (m) => { const l = logs.get(m.room); if (!l) return; const i = l.findIndex((x) => x.id === m.id); if (i >= 0) { l.splice(i, 1); if (m.room === room && !priv()) show(); } }),
-    hub.on('room-cleared', (m) => { logs.set(m.room, []); done.set(m.room, true); if (m.room === room && !priv()) show(); }),
-    hub.on('notice', (m) => { for (const [id] of ROOMS) add(id, { sys: `📢 ${m.text}` }); }),
-    hub.on('banned', (m) => { const why = `You are banned from chat${m.until ? ' until ' + new Date(m.until).toLocaleString() : ''}${m.reason ? ': ' + m.reason : ''}.`; for (const [id] of ROOMS) add(id, { sys: why }); state('banned'); }),
-    hub.on('kicked', (m) => { add(room, { sys: `You were removed from chat${m.reason ? ': ' + m.reason : ''}.` }); }),
-    hub.on('dms', (m) => { convos = m.list; for (const c of convos) if (c.last.from !== hub.account && c.last.at > +store.get(`dm-seen-${c.with}`, '0')) unreadDm.add(c.with); if (priv() && !peer) show(); else tabs(); }),
-    hub.on('dm-history', (m) => {
-      loadingOlder = false; dmDone.set(m.with, m.done);
-      if (dmLogs.has(m.with) && m.messages.length && dmLogs.get(m.with).length) { if (peer === m.with) prepend(dmLogs.get(m.with), m.messages); else dmLogs.get(m.with).unshift(...m.messages); }
-      else { dmLogs.set(m.with, m.messages.slice()); if (peer === m.with) show(); }
-      const last = m.messages.at(-1); if (last && peer === m.with) store.set(`dm-seen-${m.with}`, String(last.at));
-    }),
-    hub.on('dm', (m) => {
-      const other = m.from === hub.account ? m.to : m.from;
-      if (dmLogs.has(other)) dmLogs.get(other).push(m);
-      const c = convos.find((x) => x.with === other); if (c) c.last = m; else convos.unshift({ with: other, last: m });
-      convos.sort((a, b) => b.last.at - a.last.at);
-      if (priv() && peer === other) { const near = atBottom(); log.querySelector('.sys')?.remove(); log.append(line(m)); if (near) log.scrollTop = log.scrollHeight; store.set(`dm-seen-${other}`, String(m.at)); }
-      else { if (m.from !== hub.account) unreadDm.add(other); if (priv() && !peer) show(); else tabs(); }
-    }),
-    hub.on('error', (m) => { loadingOlder = false; if (!priv()) add(room, { sys: m.error }); else { log.append(line({ sys: m.error })); log.scrollTop = log.scrollHeight; } }),
-  ];
-  for (const b of el.querySelectorAll('[data-room]')) b.addEventListener('click', () => {
-    room = b.dataset.room; store.set('chat-room', room);
-    if (priv()) { peer = null; hub.dms(); }
-    show(); text.focus();
-  });
-  $('[data-say]').addEventListener('submit', (ev) => {
-    ev.preventDefault();
-    const t = text.value.trim(); if (!t) return;
-    if (!priv()) { if (hub.say(room, t)) text.value = ''; return; }
-    const to = peer ?? toIn.value.trim().toLowerCase();
-    if (!to) { toIn.focus(); return; }
-    if (hub.dm(to, t)) { text.value = ''; if (!peer) openDm(to); }
-  });
-  nameIn.value = hub.name;
-  nameIn.addEventListener('change', () => { const n = nameIn.value.trim(); if (n.length >= 2) hub.rename(n); else nameIn.value = hub.name; });
-  for (const [id] of ROOMS) hub.join(id);
-  hub.connect(); if (hub.state === 'online') { hub.auth(); }
-  show();
-  setTimeout(() => text.focus(), 50);
-  return () => { for (const off of offs) off(); };
+  preview();
+}
+
+// Saves: this player's saves (the account's when signed in, kept online through web/cloud-sync.js), each playable straight from
+// here, shareable as a link, or downloadable; and the saves other players shared.
+function savesPanel(el, { onPlaySave, highlight, sharedNote }) {
+  let tab = 'mine', community = [], communityState = '', note = sharedNote ?? '';
+  const urls = [];
+  const free = () => { for (const u of urls.splice(0)) URL.revokeObjectURL(u); };
+  const draw = async () => {
+    free();
+    el.innerHTML = `<div class="panel-head"><img src="${game('html/img/creations.png')}" alt=""><span>Saves</span><small data-cloud></small><a href="#" class="x" data-close title="Close">✕</a></div>
+      <div class="tabs" role="tablist"><button role="tab" data-tab="mine">My saves</button><button role="tab" data-tab="community">Community</button></div>
+      <div class="panel-body" data-body><p class="hint">Reading…</p></div>`;
+    for (const b of el.querySelectorAll('[data-tab]')) { b.classList.toggle('on', b.dataset.tab === tab); b.onclick = () => { tab = b.dataset.tab; draw(); }; }
+    el.querySelector('[data-close]')?.addEventListener('click', free);
+    const body = el.querySelector('[data-body]'), cloudEl = el.querySelector('[data-cloud]');
+    cloudEl.textContent = account() ? 'kept online for ' + account().user : 'this browser only';
+    if (tab === 'community') return drawCommunity(body);
+    const saves = await listSaves();
+    body.innerHTML = `${note ? `<p class="note-box">${note}</p>` : ''}
+      <p class="hint">${account() ? 'Your saves follow your account to any browser.' : 'Saves stay in this browser. Sign in (Profile) to keep them online and on every browser.'}
+        Make saves in game from the spawn menu (<kbd>Q</kbd> → Saves) or the main menu.</p>
+      <div class="savelist">${saves.length ? '' : '<p class="hint">No saves yet.</p>'}</div>
+      <div class="row">${account() ? '<button class="btn" data-sync>Sync now</button>' : ''}<button class="btn" data-open>Open a shared save…</button></div><p class="hint" data-msg></p>`;
+    const list = body.querySelector('.savelist'), msg = body.querySelector('[data-msg]');
+    for (const sv of saves) {
+      const row = document.createElement('div'); row.className = 'saverow' + (sv.file === highlight ? ' hl' : '');
+      const img = document.createElement('img'); img.alt = ''; if (sv.thumb) { const u = URL.createObjectURL(sv.thumb); urls.push(u); img.src = u; } else img.className = 'nothumb';
+      const info = document.createElement('div'); info.className = 'saveinfo';
+      info.innerHTML = `<b></b><small>${new Date(sv.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} · ${fmtSize(sv.size)}</small>`;
+      info.querySelector('b').textContent = sv.name;
+      const btns = document.createElement('div'); btns.className = 'vbtns';
+      const btn = (label, cls, fn) => { const b = document.createElement('button'); b.className = cls; b.textContent = label; b.onclick = fn; btns.append(b); return b; };
+      btn('Play', 'btn-primary', () => onPlaySave(sv.file));
+      if (hubHttp()) btn('Share', 'btn', async (e) => {
+        if (!account()) { msg.textContent = 'Sign in (Profile) to share saves.'; return; }
+        e.target.disabled = true; msg.textContent = `Sharing ${sv.name}…`;
+        try { const r = await shareSave(await saveEntries(sv.file), { name: sv.name }); showLink(row, saveLink(r.code)); msg.textContent = ''; } catch (err) { msg.textContent = err.message; e.target.disabled = false; }
+      });
+      btn('⭳', 'btn', async () => { const blob = encodeBackup((await saveEntries(sv.file)).map(([p, b]) => ['/overlay/garrysmod/' + p, b])); const u = URL.createObjectURL(blob), a = document.createElement('a'); a.href = u; a.download = `${sv.name}.gwb`; a.click(); setTimeout(() => URL.revokeObjectURL(u), 60e3); }).title = 'Download (import it from the game\'s Saves page)';
+      btn('✕', 'btn', async () => { if (!confirm(`Delete the save “${sv.name}”?${account() ? ' It is removed from your account too.' : ''}`)) return; await deleteSave(sv.file); draw(); }).title = 'Delete';
+      row.append(img, info, btns);
+      list.append(row);
+    }
+    body.querySelector('[data-sync]')?.addEventListener('click', async (e) => {
+      e.target.disabled = true; msg.textContent = 'Syncing…';
+      try { const r = await syncCloud({ mode: 'full', onProgress: (d, n) => { msg.textContent = `Syncing… ${d}/${n}`; } }); msg.textContent = `Up to date (${r.up} sent, ${r.down} received). ${fmtSize(r.used)} of ${fmtSize(r.quota)} used.`; setTimeout(draw, 1500); }
+      catch (err) { msg.textContent = err.message; e.target.disabled = false; }
+    });
+    body.querySelector('[data-open]').onclick = async () => {
+      const text = prompt('Paste a shared save link or code:');
+      const code = /(?:[?&]save=|^)([A-Za-z0-9_-]{6,12})\s*$/.exec(String(text ?? '').trim())?.[1];
+      if (!code) return;
+      try { const file = await writeSaveEntries(await fetchShare(code)); highlight = file; note = 'Added the shared save to your saves.'; draw(); } catch (err) { msg.textContent = err.message; }
+    };
+    el.querySelector('.hl')?.scrollIntoView({ block: 'nearest' });
+  };
+  function showLink(row, link) {
+    let box = row.querySelector('.vshare');
+    if (!box) { box = document.createElement('div'); box.className = 'vshare'; row.append(box); }
+    box.innerHTML = `<input readonly value="${esc(link)}"><button class="btn" data-copy>Copy</button>`;
+    box.querySelector('input').select();
+    box.querySelector('[data-copy]').onclick = async (ev) => { try { await navigator.clipboard.writeText(link); ev.target.textContent = 'Copied'; } catch { ev.target.textContent = 'Select and copy'; } };
+  }
+  async function drawCommunity(body) {
+    body.innerHTML = `<form class="say" data-q style="padding:0;background:none;border:0;margin-bottom:8px"><input placeholder="Search shared saves" data-qi><button class="btn">Search</button></form><div class="savelist" data-list><p class="hint">Loading…</p></div><p class="hint" data-msg></p>`;
+    const listEl = body.querySelector('[data-list]'), msg = body.querySelector('[data-msg]');
+    const load = async (q = '') => {
+      try { community = (await listShares({ sort: 'latest', q })).items; communityState = ''; } catch (e) { community = []; communityState = e.message; }
+      listEl.replaceChildren();
+      if (!community.length) { listEl.innerHTML = `<p class="hint">${esc(communityState || 'Nothing shared yet. Share one of your saves!')}</p>`; return; }
+      for (const s of community) {
+        const row = document.createElement('div'); row.className = 'saverow';
+        const img = document.createElement('img'); img.alt = ''; img.crossOrigin = 'anonymous'; if (s.thumb) img.src = shareThumb(s.code); else img.className = 'nothumb';
+        const info = document.createElement('div'); info.className = 'saveinfo'; info.innerHTML = '<b></b><small></small>';
+        info.querySelector('b').textContent = s.name; info.querySelector('small').textContent = `${s.map ? s.map + ' · ' : ''}by ${s.author} · ${s.downloads} load${s.downloads === 1 ? '' : 's'}`;
+        const btns = document.createElement('div'); btns.className = 'vbtns';
+        const play = document.createElement('button'); play.className = 'btn-primary'; play.textContent = 'Play';
+        play.onclick = async () => { play.disabled = true; try { onPlaySave(await writeSaveEntries(await fetchShare(s.code))); } catch (e) { msg.textContent = e.message; play.disabled = false; } };
+        const add = document.createElement('button'); add.className = 'btn'; add.textContent = 'Add';
+        add.onclick = async () => { try { highlight = await writeSaveEntries(await fetchShare(s.code)); note = `Added “${esc(s.name)}” to your saves.`; tab = 'mine'; draw(); } catch (e) { msg.textContent = e.message; } };
+        btns.append(play, add); row.append(img, info, btns); listEl.append(row);
+      }
+    };
+    body.querySelector('[data-q]').onsubmit = (e) => { e.preventDefault(); load(body.querySelector('[data-qi]').value.trim()); };
+    load();
+  }
+  draw();
 }
 
 // Game versions: an edition plus a chosen set of Workshop addons (and, for Extended, which bundled addons are left out),
@@ -533,10 +551,11 @@ function menu(ext, backdrop, opts = {}) {
     let edition = ids.includes(store.get('edition')) ? store.get('edition') : 'base';
     let quality = store.get('quality', (navigator.hardwareConcurrency ?? 8) <= 4 ? 'perf' : 'sharp');
     if (!QUALITY[quality]) quality = 'std';
-    const warn = problems(), single = ids.length === 1, hub = new Hub();
+    const warn = problems(), single = ids.length === 1, hub = sharedHub();
     // Garry's Web is a fan project: say so, and whose the game is.
     const legal = `Garry's Web is an unofficial fan project, not affiliated with Facepunch Studios or Valve. ${ext ? "Garry's Mod and the bundled games belong to Facepunch Studios and Valve; addons belong to their Workshop authors." : "Garry's Mod belongs to Facepunch Studios and Valve."}`;
-    const extras = [['about', 'About'], ['versions', 'Game Versions'], ['profile', 'Profile'], ['chat', 'Chat'], ['files', 'Your Files'], ['controls', 'Controls'], ['fullscreen', 'Fullscreen']].filter(([k]) => k !== 'chat' || hub.url);
+    const extras = [['about', 'About'], ['saves', 'Saves'], ['versions', 'Game Versions'], ['chat', 'Chat'], ['friends', 'Friends'], ['profile', 'Profile'], ['files', 'Your Files'], ['controls', 'Controls'], ['fullscreen', 'Fullscreen']]
+      .filter(([k]) => (k !== 'chat' && k !== 'friends') || hub.url);
 
     const page = document.createElement('div');
     page.className = 'page';
@@ -544,10 +563,11 @@ function menu(ext, backdrop, opts = {}) {
       <div class="options"><ul>
         <li class="logo"><img src="${brand('logo@2x.png')}" alt="Garry's Web" width="288" height="128"></li>
         <li class="gap"></li>
+        <li class="cont" data-continue hidden></li>
         ${ids.map((id) => `<li><a href="#" data-ed="${id}">${single ? 'Start Game' : EDITIONS[id].item}</a></li>`).join('')}
         ${versions().filter((v) => ids.includes(v.edition)).slice(-4).reverse().map((v) => `<li class="ver"><a href="#" data-gv="${v.id}">${esc(v.name)} <small>${esc(versionLine(v))}</small></a></li>`).join('')}
         <li class="gap small"></li>
-        ${extras.map(([k, label]) => `<li class="sub"><a href="#" data-open="${k}">${label}${k === 'chat' ? '<small data-online></small>' : ''}</a></li>`).join('')}
+        ${extras.map(([k, label]) => `<li class="sub"><a href="#" data-open="${k}">${label}${k === 'chat' ? '<small data-online></small><b class="mbadge" data-chatbadge hidden></b>' : k === 'friends' ? '<small data-friends></small><b class="mbadge" data-friendbadge hidden></b>' : ''}</a></li>`).join('')}
         ${warn.length ? `<li class="gap"></li>${warn.map((w) => `<li><span class="note warn">${esc(w)}</span></li>`).join('')}` : ''}
       </ul></div>
       <div class="side">
@@ -562,25 +582,74 @@ function menu(ext, backdrop, opts = {}) {
     nav.innerHTML = `<div class="info"><div data-credit>&nbsp;</div><div class="legal">${esc(legal)}</div></div>
       <button class="button" data-gfx aria-haspopup="true"><img src="${game('html/img/settings.png')}" alt=""><span data-gfx-label></span></button>
       <ul class="popup" data-gfx-menu hidden>${Object.entries(QUALITY).map(([k, q]) => `<li tabindex="0" data-q="${k}"><img src="${game('html/img/settings.png')}" alt="">${q.label}<small>${q.size}</small></li>`).join('')}</ul>`;
-    const version = document.createElement('div');
-    version.className = 'version';
-    version.textContent = "Garry's Web: Garry's Mod in your browser";
+    // Top right: who is signed in (picture, name, status), opening Profile; for guests, a prompt to sign in.
+    const version = document.createElement('button');
+    version.className = 'version me-chip'; version.type = 'button';
+    version.title = 'Your profile';
     root.append(page, nav, version);
+    const drawChip = async () => {
+      const a = account(), p = a ? await getProfile(a.user).catch(() => null) : null, st = hub.myStatus ?? p?.status ?? 'online';
+      const av = document.createElement('span'); av.className = 'gwc-av'; av.append(avatarEl(p, a ? a.user : hub.name, 28));
+      if (a) { const dot = document.createElement('i'); dot.className = `gwc-dot s-${st === 'invisible' ? 'offline' : st}`; av.append(dot); }
+      const t = document.createElement('span'); t.className = 'chip-text';
+      t.innerHTML = `<b></b><small></small>`; t.querySelector('b').textContent = a ? displayName(p, a.user) : 'Not signed in';
+      t.querySelector('small').textContent = a ? (p?.custom?.text ? `${p.custom.emoji ?? ''} ${p.custom.text}` : STATUS[st]?.[0] ?? '') : 'Sign in to keep saves and chat with friends';
+      version.replaceChildren(av, t);
+    };
+    chatStyles(); drawChip();
+    version.onclick = () => openPanel('profile');
     backdrop.onChange = (c) => { nav.querySelector('[data-credit]').innerHTML = `Background: “<b>${esc(c.title)}</b>” by ${esc(c.author)}`; };
     if (backdrop.current) backdrop.onChange(credit(backdrop.current));
 
     const $ = (q) => root.querySelector(q), popup = $('[data-gfx-menu]'), panelEl = $('[data-panel]'), newsEl = $('.news');
     // How many people are in chat, next to its menu entry (one status request, no socket until the panel opens).
-    const onlineEl = $('[data-online]');
+    const onlineEl = $('[data-online]'), friendsEl = $('[data-friends]');
     const showOnline = (n) => { if (onlineEl) onlineEl.textContent = n ? ` ${n} online` : ''; };
     if (onlineEl) hubStatus(hub.url).then((s) => showOnline(s?.online));
-    hub.on('welcome', (m) => showOnline(m.online));
+    const showFriends = () => {
+      const f = hub.friends; if (!friendsEl || !f) return;
+      const on = f.friends.filter((x) => hub.presence?.has(x.user)).length;
+      friendsEl.textContent = on ? ` ${on} online` : '';
+      const b = $('[data-friendbadge]'); b.hidden = !f.incoming.length; b.textContent = f.incoming.length;
+    };
+    const hubOffs = [hub.on('welcome', (m) => showOnline(m.online)), hub.on('friends', showFriends), hub.on('presence', showFriends), hub.on('presence-list', showFriends), hub.on('my-status', drawChip), hub.on('profile', (m) => { if (m.user === account()?.user) drawChip(); })];
+    // Signed in: connected from the start, so friends, private messages and notices arrive while the menu is open.
+    if (hub.url && account()) { hub.setActivity({ kind: 'launcher', detail: 'In the launcher' }); hub.connect(); }
+
+    // Chat (web/chat-app.js) opens in a large window over the menu and stays alive when closed, so notices keep coming.
+    let chat = null, chatWrap = null;
+    const toasts = document.createElement('div'); toasts.className = 'gw-toasts'; root.append(toasts);
+    const toast = ({ title, body, open: go }) => {
+      const t = document.createElement('div'); t.className = 'gw-toast'; t.innerHTML = '<div><b></b><span></span></div>';
+      t.querySelector('b').textContent = title; t.querySelector('span').textContent = body ?? '';
+      t.onclick = () => { t.remove(); openChat(); go?.(); };
+      toasts.append(t); while (toasts.childElementCount > 3) toasts.firstElementChild.remove();
+      setTimeout(() => t.remove(), 7000);
+    };
+    const chatBadge = () => { const b = $('[data-chatbadge]'); if (!b || !chat) return; const n = chat.unreadCount(); b.hidden = !n || !chatWrap.hidden; b.textContent = n; };
+    function ensureChat() {
+      if (chat) return;
+      chatWrap = document.createElement('div'); chatWrap.className = 'gw-overlay'; chatWrap.hidden = true;
+      const app = document.createElement('div'); chatWrap.append(app); root.append(chatWrap);
+      chat = mountChat(app, { hub, mode: 'launcher', onClose: () => closeChat(),
+        onNotify: (n) => { if (chatWrap.hidden) toast(n); chatBadge(); },
+        onEditProfile: () => { closeChat(); if (panel !== 'profile') openPanel('profile'); },
+        onOpenSave: (code) => { closeChat(); openShared(code); } });
+      chat.visible(false);
+      chatWrap.addEventListener('pointerdown', (e) => { if (e.target === chatWrap) closeChat(); });
+      chatWrap.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); closeChat(); } });
+    }
+    function openChat(target) { ensureChat(); chatWrap.hidden = false; chat.visible(true); if (target) chat.open(target); chat.focus(); chatBadge(); }
+    function closeChat() { if (!chatWrap || !chat) return; chatWrap.hidden = true; chat.visible(false); chatBadge(); }
+    if (hub.url && account()) ensureChat();
     // card: the news card shown (an edition, or 'about'). Hovering or focusing an edition shows it; leaving goes back to `rest`,
     // which is the About card until a pager square picks another.
     let panel = null, closePanel = null, rest = 'about', card = rest;
     const openPanel = (k) => {
       closePanel?.(); closePanel = null;
       if (k === 'about') { if (panel) openPanel(panel); rest = 'about'; showCard('about'); return; }
+      if (k === 'chat') { openChat(); return; }
+      if (k === 'friends') { openChat({ kind: 'friends', tab: hub.friends?.incoming?.length ? 'pending' : 'online' }); return; }
       if (k === 'fullscreen') {
         if (document.fullscreenElement) document.exitFullscreen?.(); else document.documentElement.requestFullscreen?.().catch(() => {});
         return;
@@ -589,7 +658,7 @@ function menu(ext, backdrop, opts = {}) {
       panelEl.hidden = !panel; newsEl.hidden = !!panel;
       for (const a of page.querySelectorAll('[data-open]')) a.classList.toggle('cur', a.dataset.open === panel);
       render();
-      if (panel === 'chat') closePanel = chatPanel(panelEl, hub);
+      if (panel === 'saves') savesPanel(panelEl, { highlight: opts.highlightSave, sharedNote: opts.sharedNote, onPlaySave: (file) => play(edition, null, file) });
       else if (panel === 'versions') versionsPanel(panelEl, { ext, highlight: opts.highlight, onPlay: (v) => play(v.edition, v) });
       else if (panel === 'profile') profilePanel(panelEl, hub, (why) => { if (why === 'close') openPanel('profile'); else location.reload(); });
       else if (panel === 'files') filesPanel(panelEl);
@@ -626,14 +695,36 @@ function menu(ext, backdrop, opts = {}) {
     const setQuality = (q) => { if (q !== quality) { quality = q; store.set('quality', q); render(); } };
     const qs = Object.keys(QUALITY), cycle = (d) => setQuality(qs[(qs.indexOf(quality) + d + qs.length) % qs.length]);
     let went = false;
-    const play = (id, gv = null) => {
+    // save: 'saves/x.gms' to load as soon as the game's menu is up (Continue, Play on a save).
+    const play = (id, gv = null, save = null) => {
       if (went) return;
       went = true; edition = id; if (!gv) store.set('edition', id);
-      closePanel?.(); hub.close();
+      closePanel?.(); chat?.destroy(); for (const off of hubOffs) off(); hub.close();
       document.removeEventListener('keydown', onKey); document.removeEventListener('pointerdown', closePopup); document.removeEventListener('fullscreenchange', fsLabel);
       page.classList.add('leave'); nav.classList.add('leave'); version.remove();
-      setTimeout(() => { page.remove(); nav.remove(); resolve({ edition, scale: QUALITY[quality].scale, version: gv }); }, reducedMotion ? 0 : 350);
+      chatWrap?.remove(); toasts.remove();
+      setTimeout(() => { page.remove(); nav.remove(); resolve({ edition, scale: QUALITY[quality].scale, version: gv, save }); }, reducedMotion ? 0 : 350);
     };
+    // Continue: the newest save, one click back into it.
+    listSaves().then((saves) => {
+      const sv = saves[0], li = page.querySelector('[data-continue]');
+      if (!sv || !li || went) return;
+      li.hidden = false;
+      li.innerHTML = `<a href="#" data-cont>Continue <small></small></a>`;
+      li.querySelector('small').textContent = `${sv.name} · ${new Date(sv.at).toLocaleDateString([], { month: 'short', day: 'numeric' })}`;
+      li.querySelector('a').onclick = (ev) => { ev.preventDefault(); play(edition, null, sv.file); };
+    }).catch(() => {});
+    // A shared save (a ?save= link, or one posted in chat): added to this player's saves, then shown in Saves to play.
+    async function openShared(code) {
+      try {
+        const [info, entries] = await Promise.all([shareInfo(code), fetchShare(code)]);
+        const file = await writeSaveEntries(entries);
+        opts.highlightSave = file; opts.sharedNote = `Added “${esc(info.name)}” by ${esc(info.author)}${info.map ? ` (${esc(info.map)})` : ''} to your saves. Press <b>Play</b> to start it.`;
+      } catch (e) { opts.sharedNote = esc(e.message); }
+      if (panel === 'saves') openPanel('saves');
+      openPanel('saves');
+    }
+    if (opts.sharedSave) openShared(opts.sharedSave);
     for (const a of page.querySelectorAll('[data-gv]')) a.addEventListener('click', (ev) => { ev.preventDefault(); const v = getVersion(a.dataset.gv); if (v) play(v.edition, v); });
     if (opts.open) setTimeout(() => openPanel(opts.open), 0);
     for (const a of page.querySelectorAll('[data-ed]')) {
@@ -657,6 +748,7 @@ function menu(ext, backdrop, opts = {}) {
     const onKey = (ev) => {
       if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
       if (ev.target?.closest?.('.admin-overlay')) return;   // the admin panel and its terminal take their own keys
+      if (chatWrap && !chatWrap.hidden) return;              // so does chat
       const k = ev.key, typing = /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(ev.target?.tagName) && panelEl.contains(ev.target);
       if (k === 'Escape') { if (!popup.hidden) popup.hidden = true; else if (panel) openPanel(panel); return; }
       if (typing || panelEl.contains(ev.target)) return;
@@ -690,6 +782,7 @@ const STAGES = ['Loading the engine', 'Reading game files', 'Loading game code',
 function phase(text) {
   let m;
   if (/^Starting\.\.\./.test(text)) return [0, 0, 'Preparing'];
+  if (/^Syncing your saves/.test(text)) return [0.5, 0, 'Bringing your saves from your account'];
   if ((m = /^Downloading addons\.\.\. \((\d+)\/(\d+)\) (.*)$/.exec(text))) return [1 + 5 * ((m[1] - 1) / m[2]), 0, `Addon ${m[1]} of ${m[2]}: ${m[3]}`];
   if (/^Loading host/.test(text)) return [2, 0, 'Engine host'];
   if (/^Indexing game files/.test(text)) return [6, 1, 'Game file index'];
@@ -799,14 +892,21 @@ async function start() {
   const forced = params.get('launcher') === '1'; params.delete('launcher');
   // ?v=<code>: a shared game version, added to this browser's list and shown in the menu (not a reason to skip it).
   const shared = params.get('v'); params.delete('v');
+  // ?save=<code>: a shared save (web/save-share.js), added to this player's saves and shown in Saves.
+  const sharedSave = params.get('save'); params.delete('save');
+  if (sharedSave) history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params : ''));
   const explicit = !forced && [...params.keys()].filter((k) => k !== 'hub').length > 0;
-  let opts = {};
+  let opts = sharedSave && /^[A-Za-z0-9_-]{6,12}$/.test(sharedSave) ? { sharedSave } : {};
   if (shared) {
     try { const v = await importShared(shared); opts = { open: 'versions', highlight: v.id }; } catch (e) { console.warn('[versions]', e.message); opts = { open: 'versions' }; }
     history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params : ''));
   }
   // Signed in: bring this browser's settings up to date with the account first (briefly; offline is fine).
   if (account()) { await Promise.race([sync().catch((e) => console.warn('[account]', e.message)), new Promise((r) => setTimeout(r, 4000))]); autoSync(); }
+  // The account's game files: its own folder in this browser, brought in step with the cloud while the menu is open.
+  const files = prepareGameDir().then(() => (account() ? syncCloud({ mode: 'full' }) : null))
+    .then((r) => { if (r && !r.skipped) try { localStorage.setItem('garrys-wasm.cloud-last', JSON.stringify({ at: Date.now(), used: r.used, quota: r.quota })); } catch { /* blocked */ } })
+    .catch((e) => console.warn('[cloud]', e.message));
   let sel, resume = null;
   try { resume = JSON.parse(sessionStorage.getItem('garrys-wasm.resume') ?? 'null'); sessionStorage.removeItem('garrys-wasm.resume'); } catch { /* storage blocked */ }
   if (resume && !explicit) {
@@ -822,6 +922,12 @@ async function start() {
   }
   statusEl.textContent = 'Starting...';
   const ui = loading(sel, backdrop);
+  // The game must not open the folder while the cloud sync still writes to it (a first sign-in on a new browser).
+  let synced = false; files.then(() => { synced = true; });
+  await Promise.race([files, new Promise((r) => setTimeout(r, 400))]);
+  if (!synced) { statusEl.textContent = 'Syncing your saves...'; await Promise.race([files, new Promise((r) => setTimeout(r, 30000))]); statusEl.textContent = 'Starting...'; }
+  stopWrites();
+  if (sel.save) try { sessionStorage.setItem('garrys-wasm.load-save', sel.save); } catch { /* storage blocked */ }
   // The addons this launch mounts (a version's, or the player's own) that this browser does not have yet are fetched first.
   const own = sel.version ?? { addons: launchAddons(null).map((name) => ({ name, ...libraryMeta()[name] })) };
   if (own.addons.length) await fetchVersionAddons(own).catch((e) => console.warn('[versions]', e.message));

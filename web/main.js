@@ -115,12 +115,17 @@ import { GameVoice } from './voice.js';
 import { Lobby } from './lobby.js';
 import { hubUrl } from './hub.js';
 import { steamAccount, accountId, ticket as steamTicket, keepalive as steamKeepalive } from './steam-account.js';
+import { gameDirName, autoPush, syncCloud } from './cloud-sync.js';
+import { createOverlay } from './overlay.js';
 
-const storage = await openStorage({ library: launchAddons(version) }).catch(e => { status.textContent = `Storage failed: ${e.message}`; throw e; });
+// This player's files: the guest's folder, or the signed-in account's (web/cloud-sync.js; the launcher synced it already).
+const storage = await openStorage({ library: launchAddons(version), dir: gameDirName() }).catch(e => { status.textContent = `Storage failed: ${e.message}`; throw e; });
 // Addons older builds kept in memory were moved into the library: they stay in the plain edition's "my addons".
 for (const m of storage.migrated) updateMeta(m.name, { title: m.name.replace(/\.gma$/, ''), size: m.size, global: true, added: Date.now() });
 const session = { version, active: new Set(storage.library) };
 const preferences = await storage.request('preferences');
+// Signed in: what the game saves (saves, dupes, data, settings) goes to the account's cloud copy every minute and on leaving.
+const pushCloud = autoPush(() => storage.request('flush'));
 
 const worker = new Worker(new URL('./guest-worker.js', import.meta.url), { type: 'module' });
 let frames = 0;
@@ -145,7 +150,21 @@ const p2p = params.mp === '1' ? new P2P({ edition, internet: !!hubUrl(), identit
 const lobby = p2p ? new Lobby(p2p, { edition }) : null;
 window.__p2p = p2p;
 window.__lobby = lobby;
-panels.host = menuHost(storage, p2p, { edition, lobby, session, steamSignedIn: () => !!steamAcct, startedOff: String(params.disabledAddons ?? '').split(',').filter(Boolean).sort().join(',') });
+// Chat over the game (Shift+Tab) and what friends see this player doing.
+const playing = version ? version.name : edition === 'extended' ? "Garry's Mod: Extended" : "Garry's Mod";
+const gameActivity = (map) => ({ kind: map ? 'game' : 'menu', detail: map ? `Playing ${map} · ${playing}` : `In the main menu · ${playing}`, edition, map: map ?? '' });
+let overlay = null;
+try {
+  overlay = createOverlay({ input, activity: gameActivity(''),
+    // A save shared in chat: added to this player's saves (load it from the Saves page).
+    onOpenSave: async (code, s) => {
+      try { const file = await panels.host('save-import-shared', { code }); overlay?.toast({ title: 'Save added', body: `“${s?.name ?? file}” is in your Saves (main menu → Saves).` }); }
+      catch (e) { overlay?.toast({ title: 'Could not add the save', body: e.message }); }
+    } });
+} catch (e) { console.warn('[overlay]', e); }
+window.__overlay = overlay;
+panels.host = menuHost(storage, p2p, { edition, lobby, session, steamSignedIn: () => !!steamAcct, startedOff: String(params.disabledAddons ?? '').split(',').filter(Boolean).sort().join(','),
+  onActivity: ({ inGame, map }) => overlay?.setActivity(gameActivity(inGame ? map || 'a map' : '')) });
 // Guest threads: workers ask the page to start them (a blocked worker cannot start one itself). Each thread
 // worker announces 'thread-ready' and then receives its init data; it may ask for further threads in turn.
 const threads = new Map();
@@ -190,7 +209,9 @@ worker.onmessage = (e) => {
     // The game was quit: back to the launcher (the page without launch parameters; saved files are already in OPFS).
     try { sessionStorage.removeItem('garrys-wasm.resume'); } catch { /* storage blocked */ }
     status.textContent = 'Returning to the launcher...';
-    Promise.race([storage.request('flush').catch(() => {}), new Promise((r) => setTimeout(r, 3000))]).then(() => location.replace(location.pathname));
+    // Saved files reach the account's cloud copy before leaving (briefly; the launcher syncs the rest).
+    const leave = storage.request('flush').catch(() => {}).then(() => syncCloud({ mode: 'push' })).catch(() => {});
+    Promise.race([leave, new Promise((r) => setTimeout(r, 8000))]).then(() => location.replace(location.pathname));
   } else if (m.type === 'error') {
     status.textContent = m.text;
     console.error(m.text);

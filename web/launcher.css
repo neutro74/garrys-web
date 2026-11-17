@@ -312,3 +312,53 @@ body { background: #000; }
 #launcher .admin .termbar { flex: none; display: flex; gap: 10px; align-items: center; padding: 4px 10px; color: #bbb; font-size: 12px; background: #2a2a2a; }
 #launcher .admin .term { flex: 1; min-height: 0; padding: 4px 0 0 6px; }
 @media (max-width: 700px) { #launcher .admin-overlay { padding: 0; } #launcher .panel.admin { border-radius: 0; height: 100%; } }
+
+/* ---- QoL update: account chip, Continue, Saves, profile editor ---- */
+/* Top right: who is signed in. */
+#launcher .version.me-chip { display: flex; align-items: center; gap: 8px; right: 10px; top: 10px; padding: 5px 12px 5px 6px; border: 0; border-radius: 22px; background: rgba(0,0,0,.6); color: #fff; cursor: pointer; text-align: left; box-shadow: 0 1px 6px rgba(0,0,0,.4); }
+#launcher .me-chip:hover { background: rgba(0,0,0,.8); }
+#launcher .me-chip .gwc-av .gwc-dot { border-color: #222; width: 9px; height: 9px; border-width: 2px; }
+#launcher .chip-text { display: flex; flex-direction: column; line-height: 1.2; max-width: 220px; }
+#launcher .chip-text b { font-size: 13px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#launcher .chip-text small { font-size: 11px; font-weight: normal; color: #bbb; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* Menu badges (unread chat, friend requests). */
+#launcher .mbadge { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 9px; background: #da373c; color: #fff; font-size: 12px; line-height: 18px; text-align: center; letter-spacing: 0; vertical-align: 3px; text-shadow: none; }
+#launcher .mbadge[hidden] { display: none; }
+/* Continue: back into the newest save. */
+#launcher .options li.cont a { font-size: 23px; color: #ffe066; }
+#launcher .options li.cont small { display: block; font-size: 12px; font-weight: normal; color: #ddd; letter-spacing: 0; margin-top: -2px; }
+/* Saves */
+#launcher .panel .tabs { flex: none; display: flex; gap: 2px; padding: 6px 10px 0; background: #eee; border-bottom: 1px solid #ccc; }
+#launcher .panel .tabs button { padding: 5px 12px; border: 1px solid transparent; border-bottom: 0; border-radius: 5px 5px 0 0; background: none; color: #555; font-weight: bold; cursor: pointer; }
+#launcher .panel .tabs button.on { background: #fff; border-color: #ccc; color: #222; margin-bottom: -1px; }
+#launcher .savelist { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+#launcher .saverow { display: grid; grid-template-columns: 96px 1fr auto; gap: 6px 10px; align-items: center; padding: 6px; border: 1px solid #e3e3e3; border-radius: 6px; background: #fafafa; }
+#launcher .saverow.hl { border-color: #08c; box-shadow: 0 0 0 2px rgba(0,136,204,.2); }
+#launcher .saverow > img { width: 96px; height: 60px; object-fit: cover; border-radius: 4px; background: #ddd; }
+#launcher .saveinfo { display: flex; flex-direction: column; min-width: 0; }
+#launcher .saveinfo b { font-size: 14px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#launcher .saveinfo small { color: #777; }
+#launcher .saverow .vshare { grid-column: 1 / -1; }
+#launcher .note-box { margin: 0 0 8px; padding: 8px 10px; border-radius: 6px; background: #eef7e8; border: 1px solid #cfe5c0; color: #354; }
+/* Profile editor */
+#launcher .pf-h { margin: 14px 0 6px; font-size: 15px; color: #333; }
+#launcher .pf-h small { font-size: 11px; font-weight: normal; color: #888; margin-left: 6px; }
+#launcher .pf-grid { display: grid; grid-template-columns: 220px 1fr; gap: 10px; align-items: start; margin-bottom: 6px; }
+#launcher .pf-preview { display: block; height: auto; background: none; border-radius: 8px; font-size: 13px; }
+#launcher .pf-preview .gwc-card { width: 220px; }
+#launcher .pf-preview .gwc-banner { height: 70px; }
+#launcher .pf-preview .gwc-cardbody p { max-height: 6em; overflow: hidden; }
+#launcher .pf-fields .field { margin-bottom: 6px; }
+#launcher .pf-fields .row, #launcher .pf-custom { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+#launcher .pf-fields .btn { padding: 4px 8px; font-size: 12px; }
+#launcher input[type="color"] { width: 36px; height: 26px; padding: 0 2px; border: 1px solid #bbb; border-radius: 4px; background: #fff; cursor: pointer; }
+#launcher .pf select, #launcher .pf textarea { padding: 5px 7px; border: 1px solid #abadb3; border-radius: 3px; font: 13px "Helvetica Neue", Helvetica, Arial, sans-serif; }
+#launcher .pf textarea { width: 100%; resize: vertical; }
+#launcher .pf-custom input.pf-emoji { flex: 0 0 52px; text-align: center; }
+#launcher .pf-custom input { flex: 1; }
+#launcher .row .hint { margin: 0 0 0 8px; align-self: center; }
+@media (max-width: 1000px) { #launcher .pf-grid { grid-template-columns: 1fr; } }
+/* Chat window over the launcher */
+#launcher .gw-overlay { z-index: 50; }
+/* A save without a picture: a plain tile instead of a broken or unrelated image. */
+#launcher .saverow > img.nothumb { background: linear-gradient(135deg, #3d8bd9, #1b4f86); }

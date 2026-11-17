@@ -3,6 +3,8 @@
 // 1 MiB sha256-addressed parts (parts/xx/<hash>.bin) listed in cdn-manifest.json, served by web/cdn-sw.js.
 // usage: node tools/package-cdn.mjs --in dist/gmod-web --out dist/cdn-release [--have dist/cdn-clean/parts]
 // --have: parts already published there are listed in the manifest but not written again (saves disk on big deltas).
+// --patch <dir>: files there replace or add to the input's (same relative paths), so a small release reuses the previous
+// tree as it is instead of copying it (a reflinked copy of ~30k files still costs btrfs metadata the disk may not have).
 import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';import {fileURLToPath} from 'node:url';
 import {isUserData} from './lib/user-data.mjs';
 const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -14,15 +16,16 @@ const mime=f=>MIME[path.extname(f).slice(1).toLowerCase()]??'application/octet-s
 const plain=rel=>rel==='cdn-sw.js'||rel==='index.html'||rel==='README.txt';
 function copy(a,b){fs.mkdirSync(path.dirname(b),{recursive:true});fs.copyFileSync(a,b);}
 function walk(dir,base=''){let out=[];for(const e of fs.readdirSync(dir,{withFileTypes:true})){const rel=base?base+'/'+e.name:e.name;if(e.isDirectory())out=out.concat(walk(path.join(dir,e.name),rel));else if(e.isFile())out.push(rel);}return out;}
-export function packageCdn({input,out,have}){
- input=path.resolve(input);out=path.resolve(out);
+export function packageCdn({input,out,have,patch}){
+ input=path.resolve(input);out=path.resolve(out);if(patch)patch=path.resolve(patch);
  if(fs.existsSync(out))throw Error('Output already exists; choose a new output directory');
  if(!fs.existsSync(path.join(input,'game-index.json')))throw Error('Input is not a package-web output');
  fs.mkdirSync(out,{recursive:true});
  const files={};let partCount=0,partBytes=0,plainCount=0;const seen=new Set();
  const fd=Buffer.allocUnsafe(CHUNK);
- for(const rel of walk(input).sort()){
-  let src=path.join(input,rel);
+ const patched=new Set(patch?walk(patch):[]);
+ for(const rel of [...new Set([...walk(input),...patched])].sort()){
+  let src=path.join(patched.has(rel)?patch:input,rel);
   if((rel.startsWith('game/')&&isUserData(rel.slice(5)))||rel.startsWith('asset/garrysmod/data/')||/^asset\/garrysmod\/(addons|cache|screenshots|saves|dupes|demos)\//.test(rel))continue; // per-user state is never published
   if(['web/index.html','index.html','web/cdn-isolation.js','cdn-sw.js'].includes(rel))continue; // regenerated below
   if(rel==='_headers'||rel==='nginx.conf.example')continue; // the CDN worker supplies isolation headers
@@ -56,5 +59,5 @@ export function packageCdn({input,out,have}){
 }
 if(process.argv[1]&&fileURLToPath(import.meta.url)===path.resolve(process.argv[1])){
  const args=process.argv.slice(2),arg=(n,d)=>{const i=args.indexOf('--'+n);return i<0?d:args[i+1];};
- try{console.log(JSON.stringify(packageCdn({input:arg('in',path.join(repo,'dist/gmod-web')),out:arg('out',path.join(repo,'dist/cdn-release')),have:arg('have')})));}catch(e){console.error(e.message);process.exitCode=1;}
+ try{console.log(JSON.stringify(packageCdn({input:arg('in',path.join(repo,'dist/gmod-web')),out:arg('out',path.join(repo,'dist/cdn-release')),have:arg('have'),patch:arg('patch')})));}catch(e){console.error(e.message);process.exitCode=1;}
 }

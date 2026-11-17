@@ -3,7 +3,8 @@
 // in the same markup as the entries around them:
 //   Addons: one "Installed" view (bundled addons with on/off switches, .gma files added from this computer) in place of
 //           the Workshop views, plus "Install addon from file…".
-//   Saves:  "Import saves…" and "Export saves" next to "Open folder".
+//   Saves:  Share (instead of the Steam Workshop's Publish), community saves from other players, the account's cloud copy,
+//           and import / export of save archives.
 // Requests go to the page through window.__gmodHost (see the bridge in html-panels.js and menuHost in storage.js).
 
 import { impact } from './library.js';
@@ -215,9 +216,50 @@ async function addonsSidebar(page, ul) {
   load();
 }
 
+// Saves page. "My saves" stays the game's own view (Lua lists garrysmod/saves). Added around it:
+//   - Share: the per-save "Publish" (a Steam Workshop upload) instead uploads the save to the hub and gives a link to send.
+//   - Community saves: what other players shared (newest, most loaded, search, mine), with Load and Add to my saves; these
+//     replace the Steam-only Workshop views.
+//   - Cloud: whether this account's saves are kept online (web/cloud-sync.js), with Sync now.
+//   - Import / export of save archives (.gwb) for moving saves by hand.
 function savesSidebar(page, ul) {
   const status = note();
   const anchor = [...ul.querySelectorAll('a')].find((a) => /OpenFolder/.test(a.getAttribute('ng-click') ?? ''))?.closest('li');
+  // The Steam Workshop sections (subscribed, trending...) cannot work here; the first entry (My saves) stays.
+  const hideSteam = () => { for (const li of ul.querySelectorAll('li[ng-repeat]')) { const cat = scopeOf(li)?.cat; if (cat && cat !== 'local' && li.style.display !== 'none') li.style.display = 'none'; } };
+  hideSteam(); new MutationObserver(hideSteam).observe(ul, { childList: true, subtree: true });
+  const scope = scopeOf(page);
+  const content = page.querySelector('.ugc_content') ?? page.querySelector('.page') ?? page;
+  const views = [['latest', 'Newest'], ['popular', 'Most loaded'], ['mine', 'Shared by me']];
+  let view = null, items = [], q = '', state = '';
+  const box = el('div', { className: 'wasm-saves' }); box.style.cssText = 'position:absolute;inset:0;display:none;background:inherit;z-index:5';
+  const title = el('span'), sub = el('small'), header = el('h1', { className: 'menuheader' }, title, ' ', sub);
+  const grid = el('workshopcontainer'); grid.style.cssText = 'overflow-y:auto;position:absolute;left:0;right:0;top:56px;bottom:0;display:block';
+  box.append(header, grid);
+  content.style.position ||= 'relative';
+  content.append(box);
+  const showOwn = () => { view = null; box.style.display = 'none'; mark(); };
+  const link = (label, fn) => { const li = el('li', { className: 'clickable' }), a = el('a', { href: '', textContent: label, className: 'notactive' }); a.addEventListener('click', (e) => { e.preventDefault(); fn(); }); li.append(a); return li; };
+  const navItems = views.map(([k, label]) => { const li = link(label, () => browse(k)); li.dataset.view = k; return li; });
+  const search = el('input', { type: 'text', className: 'search_bar', placeholder: 'Search shared saves' });
+  search.addEventListener('keydown', (e) => { if (e.key === 'Enter') { q = search.value.trim(); browse('search'); } });
+  const mark = () => { for (const li of navItems) li.firstChild.className = li.dataset.view === view ? 'active' : 'notactive'; };
+  // "My saves" (the game's own list) brings the page back from a community view.
+  ul.addEventListener('click', (e) => { if (e.target.closest?.('a[ng-click*="Switch"]')) showOwn(); });
+  const cloud = note('');
+  const syncNow = item('Sync saves now', async () => {
+    cloud.textContent = 'Syncing…';
+    try { const r = await host('cloud-sync'); cloud.textContent = cloudText({ signedIn: true, ...r }); } catch (e) { cloud.textContent = e.message; }
+  });
+  const cloudText = (c) => !c.signedIn ? 'Sign in to a Garry\'s Web account (launcher → Profile) to keep saves online and on every browser.'
+    : `Saves follow your account${c.user ? ` (${c.user})` : ''}.${c.at ? ` Last synced ${new Date(c.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.` : ''}${c.quota ? ` ${Math.round(c.used / 1048576)} of ${Math.round(c.quota / 1048576)} MB used.` : ''}`;
+  host('cloud-status').then((c) => { cloud.textContent = cloudText(c); syncNow.style.display = c.signedIn ? '' : 'none'; }).catch(() => {});
+  const openCode = item('Open a shared save…', async () => {
+    const text = prompt('Paste a shared save link or code:');
+    const code = /(?:[?&]save=|^)([A-Za-z0-9_-]{6,12})\s*$/.exec(String(text ?? '').trim())?.[1];
+    if (!code) { if (text) status.textContent = 'That is not a shared save link.'; return; }
+    add({ code, name: code }, false);
+  });
   const imp = item('Import saves…', async () => {
     const file = await pickFile('.gwb');
     if (!file) return;
@@ -227,9 +269,85 @@ function savesSidebar(page, ul) {
   const exp = item('Export saves', async () => {
     try { const n = await host('export-saves'); status.textContent = `Exported ${n} save${n === 1 ? '' : 's'} to gmod-saves.gwb.`; } catch (e) { status.textContent = e.message; }
   });
-  if (anchor) anchor.after(imp, exp, status); else ul.append(imp, exp, status);
-  // "Open folder" has no meaning in a browser: point it at export instead of a Windows Explorer call.
+  const extra = [el('li', { innerHTML: '&nbsp;' }), el('li', {}, el('a', { className: 'notactive', textContent: 'Community saves', style: 'pointer-events:none;opacity:.7' })), ...navItems, el('li', {}, search),
+    el('li', { innerHTML: '&nbsp;' }), openCode, imp, exp, status, el('li', { innerHTML: '&nbsp;' }), syncNow, cloud];
+  if (anchor) anchor.after(...extra); else ul.append(...extra);
+  // "Open folder" has no meaning in a browser.
   if (anchor) anchor.style.display = 'none';
+
+  // Share replaces Publish: the save goes to the hub, the player gets a link (and it is listed for everyone unless they say no).
+  const share = async (file) => {
+    const info = file?.info ?? {};
+    if (!info.file) return;
+    const name = prompt('Name for the shared save:', info.name ?? '');
+    if (name === null) return;
+    const listed = confirm('List it under Community saves for everyone?\n\nOK: listed. Cancel: only people with the link can open it.');
+    status.textContent = `Sharing ${name || info.name}…`;
+    let map = '';
+    try { map = await saveMap(info.file); } catch { /* unknown */ }
+    try {
+      const r = await host('save-share', { file: info.file, name, map, listed });
+      status.textContent = '';
+      dialog('Save shared', `Anyone with this link can play “${r.name}”:`, r.link);
+    } catch (e) { status.textContent = e.message; }
+  };
+  if (scope) { scope.PublishLocal = share; scope.$applyAsync?.(); }
+  // The game's own per-save button reads "Publish": say what it does here.
+  new MutationObserver(() => { for (const c of page.querySelectorAll('control[ng-click^="PublishLocal"]')) if (c.textContent !== 'Share') c.textContent = 'Share'; })
+    .observe(page, { childList: true, subtree: true, characterData: true });
+
+  async function browse(k) {
+    view = k; mark(); box.style.display = ''; state = 'loading'; items = []; render();
+    try { const r = await host('save-shares', { sort: k === 'popular' ? 'popular' : 'latest', q: k === 'search' ? q : '', mine: k === 'mine' }); items = r.items; state = ''; }
+    catch (e) { state = e.message; }
+    render();
+  }
+  async function add(s, load) {
+    status.textContent = `Getting ${s.name}…`;
+    try {
+      const file = await host('save-import-shared', { code: s.code });
+      status.textContent = load ? `Loading ${s.name}…` : `Added “${s.name}” to My saves.`;
+      if (load) lua(`RunConsoleCommand("gm_load", "${file.replace(/["\\]/g, '')}")`); else refresh(page);
+    } catch (e) { status.textContent = e.message; }
+  }
+  function render() {
+    title.textContent = view === 'search' ? `Community saves: “${q}”` : `Community saves: ${views.find(([k]) => k === view)?.[1] ?? ''}`;
+    sub.textContent = 'Saves other Garry\'s Web players shared';
+    if (state || !items.length) { grid.replaceChildren(el('workshopmessage', { textContent: state === 'loading' ? 'Loading…' : state || (view === 'mine' ? 'You have not shared any saves yet. Use Share on one of your saves.' : 'Nothing found!') })); return; }
+    grid.replaceChildren(...items.map((s) => {
+      const icon = el('workshopicon'); icon.style.cssText = 'width:180px;height:180px;margin:6px';
+      const img = el('img', { src: s.thumbUrl || '../img/localaddon.png', loading: 'lazy', alt: '' }); img.crossOrigin = 'anonymous';
+      img.style.cssText = 'width:180px;height:180px;object-fit:cover'; img.onerror = () => { img.onerror = null; img.removeAttribute('crossorigin'); img.src = '../img/localaddon.png'; };
+      const pv = el('preview', {}, img); pv.style.cssText = 'left:0;top:0;width:180px;height:180px';
+      const control = (t, fn) => { const c = el('control', { textContent: t }); c.addEventListener('click', fn); return c; };
+      const controls = [control('Load', () => add(s, true)), control('Add', () => add(s, false)), control('Link', () => dialog('Shared save', `Link to “${s.name}”:`, s.link))];
+      if (s.mine) controls.push(control('Remove', async () => { if (!confirm(`Stop sharing “${s.name}”?`)) return; try { await host('save-unshare', { code: s.code }); browse(view); } catch (e) { status.textContent = e.message; } }));
+      icon.append(pv, el('name', {}, el('label', { textContent: s.name, title: s.name })), el('author', { textContent: `by ${s.author}` }),
+        el('votes', { textContent: `${s.downloads} load${s.downloads === 1 ? '' : 's'}` }), el('description', { textContent: `${s.map ? 'Map: ' + s.map + '. ' : ''}${s.desc ?? ''}` }), el('controls', {}, el('left'), el('right', {}, ...controls)));
+      return icon;
+    }));
+  }
+}
+// The map a save was made on, asked from the menu's Lua (GetSaveFileDetails); empty if it does not answer in time.
+function saveMap(file) {
+  return new Promise((resolve) => {
+    const id = 'm' + Math.random().toString(36).slice(2);
+    (window.__gwSaveInfo ??= {})[id] = (json) => { delete window.__gwSaveInfo[id]; try { resolve(JSON.parse(json).map ?? ''); } catch { resolve(''); } };
+    lua(`local i = GetSaveFileDetails and GetSaveFileDetails("${file.replace(/["\\]/g, '')}") or {} if IsValid(pnlMainMenu) then pnlMainMenu:Call("window.__gwSaveInfo && __gwSaveInfo['${id}'] && __gwSaveInfo['${id}']('" .. string.JavascriptSafe(util.TableToJSON({ map = i.map or "" })) .. "')") end`);
+    setTimeout(() => { if (window.__gwSaveInfo?.[id]) { delete window.__gwSaveInfo[id]; resolve(''); } }, 1500);
+  });
+}
+// A small box in the menu page with text to copy (Derma popups draw behind the HTML menu).
+function dialog(heading, text, value) {
+  const back = el('div'); back.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100000;display:grid;place-items:center';
+  const box = el('div'); box.style.cssText = 'background:#fff;color:#333;border-radius:6px;padding:18px 20px;width:min(520px,90vw);font:14px Helvetica,Arial,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.5)';
+  const input = el('input', { value, readOnly: true }); input.style.cssText = 'width:100%;box-sizing:border-box;padding:8px;margin:10px 0;border:1px solid #bbb;border-radius:4px;font:13px monospace';
+  const btn = (t, fn) => { const b = el('button', { textContent: t }); b.style.cssText = 'margin-right:8px;padding:6px 14px;border:0;border-radius:4px;background:#1194f0;color:#fff;font-weight:bold;cursor:pointer'; b.onclick = fn; return b; };
+  const close = () => back.remove();
+  box.append(el('b', { textContent: heading }), el('div', { textContent: text }), input,
+    btn('Copy', async (e) => { input.select(); try { await navigator.clipboard.writeText(value); e.target.textContent = 'Copied'; } catch { document.execCommand?.('copy'); e.target.textContent = 'Copied'; } }), btn('Close', close));
+  back.append(box); back.addEventListener('click', (e) => { if (e.target === back) close(); });
+  document.body.append(back); input.select();
 }
 
 // Multiplayer: GMod's own server browser, Start New Game and Join, with the browser's networking behind them.
@@ -288,7 +406,7 @@ function serverlist.IsCurrentServerFavorite() return GW.last ~= nil and load().f
 -- Shown by the menu page (a Derma popup would sit behind the server browser's HTML, out of sight).
 function GW.Message(text, title) js("window.__gwMessage && __gwMessage('" .. string.JavascriptSafe(text) .. "', '" .. string.JavascriptSafe(title or "Multiplayer") .. "')") end
 hook.Add("StartGame", "garrysweb", function() timer.Simple(0.5, function() js("window.__gwStarted && __gwStarted('" .. string.JavascriptSafe(engine.ActiveGamemode() or "") .. "', '" .. string.JavascriptSafe(GetConVarString("hostname") or "") .. "', " .. GetConVarNumber("sv_lan") .. ")") end) end)
-timer.Create("garrysweb_ingame", 2, 0, function() js("window.__gwInGame && __gwInGame(" .. tostring(IsInGame()) .. ")") end)
+timer.Create("garrysweb_ingame", 2, 0, function() js("window.__gwInGame && __gwInGame(" .. tostring(IsInGame()) .. ", '" .. string.JavascriptSafe(GetConVarString("host_map") or "") .. "')") end)
 `;
 
 async function serverBrowser() {
@@ -432,12 +550,26 @@ async function serverBrowser() {
     host('lobby-host', { name: (hostname && hostname !== "Garry's Mod" ? clean(hostname) : '') || undefined, map: clean(root?.Map), gamemode: clean(gamemode), max, lan: svLan === 1 })
       .then(() => { listed = true; }).catch((e) => message(e.message, 'Hosting'));
   };
-  window.__gwInGame = (inGame) => { if (!inGame && listed && Date.now() - starting > 60e3) { listed = false; host('lobby-unhost').catch(() => {}); } };
+  // Also tells friends what the player is doing (the map, or the main menu), when that changes.
+  let lastActivity = '';
+  window.__gwInGame = (inGame, map = '') => {
+    if (!inGame && listed && Date.now() - starting > 60e3) { listed = false; host('lobby-unhost').catch(() => {}); }
+    const now = `${inGame}|${map}`;
+    if (now !== lastActivity) { lastActivity = now; host('activity', { inGame: !!inGame, map: String(map).replace(/\.bsp$/i, '') }).catch(() => {}); }
+  };
 }
 
+// A save chosen in the launcher (Continue, or Play on a save) is loaded as soon as a menu that can run Lua is up.
+let askedSave = false;
+function pendingSave() {
+  if (askedSave || !window.lua?.Run) return;
+  askedSave = true;
+  host('pending-save').then((f) => { if (f) setTimeout(() => lua(`RunConsoleCommand("gm_load", "${f.replace(/["\\]/g, '')}")`), 1500); }).catch(() => {});
+}
 const done = new WeakSet();
 function scan() {
   if (!window.__gmodHost) return;
+  pendingSave();
   serverBrowser();
   for (const [ctrl, add] of [['ControllerAddons', addonsSidebar], ['ControllerSaves', savesSidebar]]) {
     for (const page of document.querySelectorAll(`[ng-controller="${ctrl}"]`)) {

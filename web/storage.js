@@ -1,9 +1,13 @@
 import {RPC_BYTES} from '../tools/lift/host/overlay-rpc.mjs';
 import {libraryMeta,updateMeta,dropMeta,writeFile,checkGma,fileName,downloadWorkshop,hubJson,putVersion,getVersion,impact} from './library.js';
-export async function openStorage({library=[]}={}){
+import {shareSave,listShares,fetchShare,removeShare,saveLink,shareThumb} from './save-share.js';
+import {syncCloud} from './cloud-sync.js';
+import {account} from './account.js';
+// dir: the OPFS folder of this player's files ('garrys-wasm', or 'garrys-wasm@<user>' for an account; web/cloud-sync.js).
+export async function openStorage({library=[],dir='garrys-wasm'}={}){
  const worker=new Worker(new URL('./storage-worker.js', import.meta.url),{type:'module'}),buffer=new SharedArrayBuffer(RPC_BYTES),pending=new Map();let next=1;
  const ready=new Promise((resolve,reject)=>{worker.onmessage=({data:m})=>{if(m.type==='ready')resolve(m);else if(m.type==='fatal'){reject(Error(m.error));console.error('Storage:',m.error);}else {const p=pending.get(m.id);pending.delete(m.id);if(p)m.error?p.reject(Error(m.error)):p.resolve(m.result);}};worker.onerror=e=>reject(Error(e.message));});
- worker.postMessage({type:'init',buffer,library});const info=await ready;
+ worker.postMessage({type:'init',buffer,library,dir});const info=await ready;
  return {buffer,worker,migrated:info.migrated??[],library:info.library??[],request(type,options={}){return new Promise((resolve,reject)=>{const id=next++;pending.set(id,{resolve,reject});worker.postMessage({type,id,...options});});}};
 }
 // A binary backup avoids base64's large memory expansion for saves and cached addons.
@@ -15,7 +19,7 @@ export function decodeBackup(buffer){const b=new Uint8Array(buffer),dv=new DataV
 const DISABLED='garrys-wasm.disabled-addons';
 const disabledAddons=()=>{try{const v=JSON.parse(localStorage.getItem(DISABLED)??'[]');return Array.isArray(v)?v:[];}catch{return [];}};
 // session: { version (a custom game version or null), active (Set of library names mounted in this launch) }.
-export function menuHost(storage,p2p,{edition='base',startedOff='',lobby=null,session={version:null,active:new Set()},steamSignedIn=()=>false}={}){
+export function menuHost(storage,p2p,{edition='base',startedOff='',lobby=null,session={version:null,active:new Set()},steamSignedIn=()=>false,onActivity=()=>{}}={}){
  const wsProgress=new Map();
  // A newly installed addon joins this launch's set: the version's list, or the plain edition's "my addons".
  const addToSession=(name,info)=>{session.active.add(name);if(session.version){const v=getVersion(session.version.id)??session.version;if(!v.addons.some(a=>a.name===name))v.addons.push({name,id:info.id,title:info.title,size:info.size});session.version=putVersion(v);}else updateMeta(name,{global:true});};
@@ -50,6 +54,21 @@ export function menuHost(storage,p2p,{edition='base',startedOff='',lobby=null,se
    case 'restart':try{sessionStorage.setItem('garrys-wasm.resume',JSON.stringify(globalThis.__launch??{edition,version:session.version?.id}));}catch{}setTimeout(()=>location.reload(),100);return true;
    case 'set-addon-enabled':{const name=String(args.name);if(!/^[a-z0-9_.-]+$/i.test(name))throw Error('Invalid addon name');
     const off=new Set(disabledList());if(args.enabled)off.delete(name);else off.add(name);try{setDisabled([...off]);}catch{throw Error('This browser blocked saving the setting');}return [...off];}
+   // Sharing saves (web/save-share.js) and the cloud copy of this account's files (web/cloud-sync.js), for the Saves page.
+   case 'save-share':{const file=String(args.file??'');if(!/^saves\/[^/]+\.gms$/i.test(file))throw Error('Not a save');
+    const read=async p=>storage.request('read-file',{path:'/overlay/garrysmod/'+p});const gms=await read(file);if(!gms)throw Error('That save is gone');
+    const jpg=await read(file.replace(/\.gms$/i,'.jpg')).catch(()=>null);const entries=[[file,gms],...(jpg?[[file.replace(/\.gms$/i,'.jpg'),jpg]]:[])];
+    const r=await shareSave(entries,{name:String(args.name??'')||file.slice(6,-4),map:String(args.map??''),desc:String(args.desc??''),listed:args.listed!==false});return {...r,link:saveLink(r.code)};}
+   case 'save-shares':{const r=await listShares({sort:args.sort,q:args.q,page:+args.page||0,by:args.mine?account()?.user??'':''});return {...r,items:r.items.map(s=>({...s,thumbUrl:s.thumb?shareThumb(s.code):null,link:saveLink(s.code),mine:s.author===account()?.user}))};}
+   case 'save-import-shared':{const entries=await fetchShare(String(args.code));if(!entries.some(([p])=>p.endsWith('.gms')))throw Error('The share has no save in it');
+    await storage.request('saves-import',{entries});const gms=entries.find(([p])=>p.endsWith('.gms'))[0];return gms.slice('/overlay/garrysmod/'.length);}
+   // A save picked in the launcher (Continue, Play on a save): loaded once the main menu is up (web/menu-extras.js).
+   case 'pending-save':{let f=null;try{f=sessionStorage.getItem('garrys-wasm.load-save');sessionStorage.removeItem('garrys-wasm.load-save');}catch{}return /^saves\/[^/"\\]+\.gms$/i.test(f??'')?f:null;}
+   case 'activity':onActivity({inGame:!!args.inGame,map:String(args.map??'').slice(0,48)});return true;
+   case 'save-unshare':await removeShare(String(args.code));return true;
+   case 'cloud-status':{const a=account();if(!a)return {signedIn:false};let st=null;try{st=JSON.parse(localStorage.getItem('garrys-wasm.cloud-last')??'null');}catch{}return {signedIn:true,user:a.user,...(st??{})};}
+   case 'cloud-sync':{if(!account())throw Error('Sign in to a Garry\'s Web account (launcher → Profile) to keep your files in the cloud.');await storage.request('flush');
+    const r=await syncCloud({mode:'push'});const st={at:Date.now(),used:r.used,quota:r.quota};try{localStorage.setItem('garrys-wasm.cloud-last',JSON.stringify(st));}catch{}return st;}
    case 'export-saves':{const entries=await storage.request('saves-export'),count=entries.filter(([p,b])=>b&&p.endsWith('.gms')).length;
     if(!count)throw Error('There are no saves to export');download(encodeBackup(entries),'gmod-saves.gwb');return count;}
    case 'import-saves':{if(!(args.bytes instanceof ArrayBuffer))throw Error('No file');if(args.bytes.byteLength>512*1024*1024)throw Error('Archive exceeds 512 MB');

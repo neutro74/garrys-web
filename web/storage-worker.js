@@ -68,7 +68,7 @@ async function migrateAddons(){
 self.onmessage=async({data:m})=>{
  try {
   if(m.type==='init'){
-   ctl=new Int32Array(m.buffer,0,16);root=await(await navigator.storage.getDirectory()).getDirectoryHandle('garrys-wasm',{create:true});
+   ctl=new Int32Array(m.buffer,0,16);const dirName=/^garrys-wasm(@[a-z0-9_]{3,20})?$/.test(m.dir??'')?m.dir:'garrys-wasm';root=await(await navigator.storage.getDirectory()).getDirectoryHandle(dirName,{create:true});
    const mounted=createFs({index:{},reader:()=>0,onChange:(p,n)=>{if(persistent(p))dirty.set(p,n);}});volume=mounted.fs;store=mounted.overlay;
    seedOverlay(store,await load(root));
    libDir=await(await navigator.storage.getDirectory()).getDirectoryHandle('garrys-wasm-library',{create:true});

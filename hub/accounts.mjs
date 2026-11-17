@@ -30,7 +30,7 @@ export function createAccounts({ dir = path.join(process.env.WS_CACHE ?? './ws-c
     return a?.tokens?.some((t) => t.h === h) ? { a, h } : null;
   };
   const json = (res, code, obj, headers) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers }); res.end(JSON.stringify(obj)); };
-  async function body(req, max = 256 * 1024) {
+  async function body(req, max = 1024 * 1024) {
     let s = '';
     for await (const c of req) { s += c; if (s.length > max) throw Object.assign(Error('Too large.'), { status: 413 }); }
     return s ? JSON.parse(s) : {};
@@ -90,6 +90,8 @@ export function createAccounts({ dir = path.join(process.env.WS_CACHE ?? './ws-c
     const a = read(u), h = sha(String(token));
     return a?.tokens?.some((t) => t.h === h) ? u : null;
   };
+  // For the other HTTP services (profiles, cloud files, shares): the signed-in user of a request, or null.
+  handle.userOf = (req) => auth(req)?.a.user ?? null;
   handle.exists = (user) => USER.test(String(user ?? '')) && fs.existsSync(file(String(user)));
   // For the admin panel (hub/admin.mjs): every account, and signing one out everywhere.
   handle.list = () => fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => read(f.slice(0, -5))).filter(Boolean)

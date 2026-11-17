@@ -2,7 +2,18 @@
 
 One small Node server (no dependencies) for the browser build's online features:
 
-- **Chat rooms** for the launcher (`web/hub.js`, `web/launcher.js`).
+- **Chat** (`web/chat-app.js`, in the launcher and in game with Shift+Tab): text channels by category, replies, edits,
+  deletions, emoji reactions, typing, @mentions, pictures (`POST /chat/upload`, signed-in players, resized by the page,
+  4 MB) and private messages between accounts. Everything is kept in `WS_CACHE/chat` as append-only files; edits, deletions
+  and reactions are appended marks that reading applies (`hub/chat-store.mjs`).
+- **Friends and presence** (`hub/social.mjs`): requests, friends and blocks per account; who is online, their status
+  (online, idle, do not disturb, invisible) and what they are doing (in the launcher, in a menu, on a map).
+- **Profiles** (`hub/profiles.mjs`): display name, picture, banner, name colour, pronouns, about me, custom status and links
+  (`GET /profile/<user>`, `GET /profiles?u=…`, `PUT /profile`, `PUT /profile/image?kind=avatar|banner`).
+- **Cloud files** (`hub/cloud.mjs`): each account's saves, dupes, `data/`, game settings, demos and screenshots, so they
+  follow the player (`web/cloud-sync.js`); `CLOUD_QUOTA_MB` per account (512).
+- **Shared saves** (`hub/shares.mjs`): a save and its picture under a short code (`?save=<code>` links), and the community
+  list shown on the game's Saves page.
 - **Lobbies and pairing** for peer-to-peer games (`web/lobby.js`): hosts list their game, joiners click it, and the two pages
   swap WebRTC pairing codes through the hub. Game traffic never passes through it.
 - **Shared game versions** (`hub/versions.mjs`): a custom version's edition and Workshop addon list under a short code.
@@ -42,6 +53,7 @@ PORT=8787 node hub/hub.mjs
 | `WS_CACHE` | Directory for downloaded `.gma` files (default `./ws-cache`). |
 | `DEPOT_DOWNLOADER` | Path to the DepotDownloader binary. |
 | `ADMIN_USERS`, `ADMIN_SSH_TARGET` | Admin accounts (default `neutro74`) and where the admin terminal connects (default `davidc@127.0.0.1`). |
+| `CLOUD_QUOTA_MB` | Cloud space per account for game files (default 512). |
 | `WS_MAX_ITEM`, `WS_MAX_CACHE`, `WS_MAX_AGE_DAYS`, `WS_PER_IP_HOUR` | Largest item (8 GB), cache size (30 GB), days an unused file is kept (7), downloads per address per hour (30). |
 
 The page finds the hub from `?hub=wss://…` (remembered), else `HUB_DEFAULT` in `web/hub.js`.

@@ -15,13 +15,30 @@ import { createServers } from './servers.mjs';
 import { createSteamLogin } from './steam-login.mjs';
 import { createChatStore } from './chat-store.mjs';
 import { createAdmin } from './admin.mjs';
+import { createProfiles } from './profiles.mjs';
+import { createCloud } from './cloud.mjs';
+import { createShares } from './shares.mjs';
+import { createSocial } from './social.mjs';
+import { json, fail, bytes, imageType, blobStore, limiter } from './http-util.mjs';
+import path from 'node:path';
 
 const PORT = +(process.env.PORT ?? 8787), HOST = process.env.HOST ?? '0.0.0.0';
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
 const ORIGINS = (process.env.ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-const ROOMS = ['general', 'help', 'looking-for-game', 'off-topic'];
-const MUTED = new Set(['say', 'dm', 'nick', 'host']);
-const LIMITED = new Set(['say', 'dm', 'nick', 'hello', 'host', 'room-history', 'dm-history']);
+// Text channels, grouped like a Discord server's. Read-only ones take posts from admins only.
+const CHANNELS = [
+  { id: 'announcements', name: 'announcements', category: 'Garry\'s Web', topic: 'News about Garry\'s Web.', readonly: true },
+  { id: 'general', name: 'general', category: 'Garry\'s Web', topic: 'Talk about anything Garry\'s Mod.' },
+  { id: 'help', name: 'help', category: 'Garry\'s Web', topic: 'Problems starting or playing? Ask here.' },
+  { id: 'looking-for-game', name: 'looking-for-game', category: 'Play', topic: 'Find people to play with.' },
+  { id: 'showcase', name: 'showcase', category: 'Play', topic: 'Show your builds, saves and screenshots.' },
+  { id: 'off-topic', name: 'off-topic', category: 'Other', topic: 'Anything else.' },
+];
+const ROOMS = CHANNELS.map((c) => c.id);
+const MUTED = new Set(['say', 'dm', 'nick', 'host', 'edit', 'react', 'typing']);
+const LIMITED = new Set(['say', 'dm', 'nick', 'hello', 'host', 'room-history', 'dm-history', 'edit', 'delete', 'react', 'friend-add', 'profile-of']);
+const EMOJI = /^(?:\p{Extended_Pictographic}|\p{Emoji_Presentation}|[\u{1F1E6}-\u{1F1FF}]{2}|[#*0-9]\uFE0F?\u20E3)(?:[\uFE0F\u200D\u{1F3FB}-\u{1F3FF}]|\p{Extended_Pictographic}|\p{Emoji_Presentation})*$/u;
+const IMG = /^[a-f0-9]{64}\.(png|jpg|webp|gif)$/;
 const LIMITS = { clients: 500, perIp: 6, frame: 64 * 1024, text: 400, name: 24, history: 60, lobbies: 100, burst: 6, refillMs: 1500 };
 
 // ---- WebSocket framing ------------------------------------------------------------------------------------------
@@ -103,6 +120,7 @@ class Conn {
     if (this.name) admin.seen(this);
     for (const r of this.rooms) leaveRoom(this, r);
     for (const [id, l] of lobbies) if (l.host === this) dropLobby(id);
+    if (this.account) presenceChanged(this.account);
   }
 }
 
@@ -132,13 +150,18 @@ function pairUp(c, token) {
   else setTimeout(() => { if (pairs.get(token)?.length === 1) c.close(1000); }, 60e3);
 }
 const byId = (id) => { for (const c of clients) if (c.id === id) return c; return null; };
-const user = (c) => ({ id: c.id, name: c.name, ...(c.account ? { account: c.account } : {}) });
+// Who wrote a message, as other players see it. `key` identifies the author for edits and deletions: the account, or a hash of
+// the browser id for players without one (the browser id itself is a moderation detail and is not shown).
+const ownerKey = (c) => (c.account ? 'a:' + c.account : 'g:' + crypto.createHash('sha256').update('gw:' + (c.device ?? c.id)).digest('hex').slice(0, 12));
+const user = (c) => ({ id: c.id, name: c.name, key: ownerKey(c), ...(c.account ? { account: c.account } : {}) });
 const chat = createChatStore();
 const keep = (fn) => { try { fn(); } catch (e) { console.log(`chat: not saved: ${e.message}`); } };
-const clean = (s, max) => String(s ?? '').replace(/[\u0000-\u001f\u007f​-‏‪-‮]/g, '').trim().slice(0, max);
+const clean = (s, max) => String(s ?? '').replace(/[\u0000-\u0009\u000b-\u001f\u007f​-‏‪-‮]/g, '').replace(/\n{4,}/g, '\n\n\n').trim().slice(0, max);
+const channel = (id) => CHANNELS.find((c) => c.id === id);
 
-function roomList() { return ROOMS.map((name) => ({ name, users: rooms.get(name).members.size })); }
+function roomList() { return CHANNELS.map((ch) => ({ ...ch, name: ch.id, label: ch.name, users: rooms.get(ch.id).members.size })); }
 function toRoom(name, obj, except) { for (const c of rooms.get(name).members) if (c !== except) c.send(obj); }
+const toAccount = (u, obj) => { for (const c of clients) if (c.account === u) c.send(obj); };
 function leaveRoom(c, name) {
   const r = rooms.get(name);
   if (!r?.members.delete(c)) return;
@@ -151,14 +174,74 @@ function lobbyList(viewer) { return [...lobbies].filter(([, l]) => !l.info.lan |
 function pushLobbies() { for (const c of clients) if (c.watching) c.send({ t: 'lobbies', lobbies: lobbyList(c) }); }
 function dropLobby(id) { if (lobbies.delete(id)) pushLobbies(); }
 
+// ---- Presence ---------------------------------------------------------------------------------------------------
+// An account is online while any of its pages is connected; its status is the one chosen in its profile (invisible counts as
+// offline to everyone else), and its activity is what its most recently active page reports (in the launcher, in a game...).
+function presenceOf(u) {
+  const conns = [...clients].filter((c) => c.account === u && c.name);
+  if (!conns.length) return { user: u, status: 'offline', activity: null };
+  const status = profiles.status(u), act = conns.map((c) => c.activity).filter(Boolean).sort((a, b) => (b.at ?? 0) - (a.at ?? 0))[0] ?? null;
+  return { user: u, status: status === 'invisible' ? 'offline' : status, activity: status === 'invisible' ? null : act };
+}
+const lastPresence = new Map();
+function presenceChanged(u) {
+  if (!u) return;
+  const p = presenceOf(u), key = JSON.stringify(p);
+  if (lastPresence.get(u) === key) return;
+  if (p.status === 'offline') lastPresence.delete(u); else lastPresence.set(u, key);
+  for (const c of clients) if (c.name) c.send({ t: 'presence', ...p });
+  // The player's own pages are told their real status (invisible included).
+  toAccount(u, { t: 'my-status', status: profiles.status(u) });
+}
+const onlineAccounts = () => [...new Set([...clients].filter((c) => c.account && c.name).map((c) => c.account))].map(presenceOf).filter((p) => p.status !== 'offline');
+const cleanActivity = (a) => (a && typeof a === 'object' ? { kind: ['launcher', 'menu', 'game', 'server'].includes(a.kind) ? a.kind : 'launcher', detail: clean(a.detail, 80), edition: clean(a.edition, 24), map: clean(a.map, 48), at: Date.now() } : null);
+
+// ---- Messages ---------------------------------------------------------------------------------------------------
+function attachments(list) {
+  if (!Array.isArray(list)) return undefined;
+  const out = list.slice(0, 4).filter((a) => IMG.test(a?.name ?? '')).map((a) => ({ name: a.name, w: Math.max(0, Math.min(8192, a.w | 0)), h: Math.max(0, Math.min(8192, a.h | 0)) }));
+  return out.length ? out : undefined;
+}
+// A reply carries a short copy of the message it answers, so it shows even when that message is far back in the history.
+function replyTo(found) { return found ? { id: found.id, name: found.from?.name ?? found.name ?? found.from, text: String(found.text ?? '').slice(0, 120) } : undefined; }
+// Mentions (@account) reach that player even when they are not looking at the channel.
+function mention(c, text, where) {
+  const seen = new Set();
+  for (const [, u] of text.matchAll(/@([a-z0-9_]{3,20})\b/gi)) {
+    const who = u.toLowerCase();
+    if (seen.has(who) || who === c.account || seen.size >= 5) continue;
+    seen.add(who);
+    if (accounts.exists(who) && !social.blocks(who, c.account ?? '')) toAccount(who, { t: 'mention', ...where, from: user(c), text: text.slice(0, 200), at: Date.now() });
+  }
+}
+// Where a message lives: a channel ({room}) or a private chat ({with}); `own` checks who may change it.
+function locate(c, m) {
+  if (m.room !== undefined) {
+    if (!rooms.has(m.room)) throw Error('No such channel.');
+    return { find: (id) => chat.findRoom(m.room, id), mark: (x) => chat.markRoom(m.room, x), send: (obj) => toRoom(m.room, { ...obj, room: m.room }), where: { room: m.room } };
+  }
+  if (!c.account) throw Error('Sign in first.');
+  const other = String(m.with ?? '').toLowerCase();
+  if (!accounts.exists(other)) throw Error('No such account.');
+  return { find: (id) => chat.findDm(c.account, other, id), mark: (x) => chat.markDm(c.account, other, x), send: (obj) => { toAccount(c.account, { ...obj, with: other }); toAccount(other, { ...obj, with: c.account }); }, where: { with: other } };
+}
+const isAdmin = (c) => !!c.account && admin.isAdmin(c.account);
+const ownMsg = (c, msg) => msg && (msg.from?.key ? msg.from.key === ownerKey(c) : msg.from === c.account);
+
+function friendsView(u) {
+  const s = social.get(u);
+  return { t: 'friends', friends: s.friends.map(presenceOf), incoming: s.incoming, outgoing: s.outgoing, blocked: s.blocked };
+}
+
 function handle(c, m) {
   if (m.t === 'hello') {
     const name = clean(m.name, LIMITS.name);
     if (name.length < 2) throw Error('Pick a name of at least 2 characters.');
     c.name = name; c.device = /^\d{1,12}$/.test(String(m.device ?? '')) ? String(m.device) : null;
+    c.activity = cleanActivity(m.activity);
     admin.seen(c);
     if (refuseBanned(c)) return;
-    return c.send({ t: 'welcome', id: c.id, name, rooms: roomList(), online: clients.size });
+    return c.send({ t: 'welcome', id: c.id, name, key: ownerKey(c), rooms: roomList(), online: clients.size, presence: onlineAccounts() });
   }
   if (MUTED.has(m.t)) { const mu = admin.muted(c); if (mu) throw Error(`You are muted${mu.until ? ' until ' + new Date(mu.until).toUTCString() : ''}${mu.reason ? ': ' + mu.reason : ''}.`); }
   if (!c.name) throw Error('Say hello first.');
@@ -174,22 +257,56 @@ function handle(c, m) {
     }
     case 'leave': return leaveRoom(c, m.room);
     case 'say': {
-      const r = rooms.get(m.room), text = clean(m.text, LIMITS.text);
+      const r = rooms.get(m.room), text = clean(m.text, LIMITS.text), attach = attachments(m.attach);
       if (!r?.members.has(c)) throw Error('Join the room first.');
-      if (!text) return;
-      const msg = { t: 'msg', id: crypto.randomBytes(6).toString('base64url'), room: m.room, from: user(c), text, at: Date.now() };
+      if (channel(m.room)?.readonly && !isAdmin(c)) throw Error('Only admins post in this channel.');
+      if (attach && !c.account) throw Error('Sign in to a Garry\'s Web account to post pictures.');
+      if (!text && !attach) return;
+      const reply = m.reply ? replyTo(chat.findRoom(m.room, String(m.reply))) : undefined;
+      const msg = { t: 'msg', id: crypto.randomBytes(6).toString('base64url'), room: m.room, from: user(c), text, at: Date.now(), ...(reply ? { reply } : {}), ...(attach ? { attach } : {}) };
       r.history.push(msg); if (r.history.length > LIMITS.history) r.history.shift();
       keep(() => chat.saveRoom(m.room, msg));
+      mention(c, text, { room: m.room, id: msg.id });
       return toRoom(m.room, msg);
+    }
+    case 'edit': {
+      const at = locate(c, m), id = String(m.id ?? ''), text = clean(m.text, LIMITS.text), msg = at.find(id);
+      if (!ownMsg(c, msg)) throw Error('You can only edit your own messages.');
+      if (!text) throw Error('A message cannot be empty; delete it instead.');
+      at.mark({ edit: id, text }); at.send({ t: 'edited', id, text, edited: Date.now() });
+      if (m.room !== undefined) { const h = rooms.get(m.room).history.find((x) => x.id === id); if (h) { h.text = text; h.edited = Date.now(); } }
+      return;
+    }
+    case 'delete': {
+      const at = locate(c, m), id = String(m.id ?? ''), msg = at.find(id);
+      if (!msg) return;
+      if (!ownMsg(c, msg) && !(m.room !== undefined && isAdmin(c))) throw Error('You can only delete your own messages.');
+      at.mark({ del: id }); at.send({ t: 'msg-deleted', id });
+      if (m.room !== undefined) rooms.get(m.room).history = rooms.get(m.room).history.filter((x) => x.id !== id);
+      return;
+    }
+    case 'react': {
+      const at = locate(c, m), id = String(m.id ?? ''), emoji = String(m.emoji ?? '');
+      if (!EMOJI.test(emoji) || emoji.length > 16) throw Error('That is not an emoji.');
+      if (!at.find(id)) throw Error('That message is gone.');
+      const by = c.account ?? c.name, on = m.on !== false;
+      at.mark({ react: id, emoji, by, on }); at.send({ t: 'reacted', id, emoji, by, on });
+      return;
+    }
+    case 'typing': {
+      if (m.room !== undefined) { if (rooms.get(m.room)?.members.has(c)) toRoom(m.room, { t: 'typing', room: m.room, user: user(c) }, c); return; }
+      if (!c.account) return;
+      const other = String(m.with ?? '').toLowerCase();
+      if (social.blocks(other, c.account) || !accounts.exists(other)) return;
+      return toAccount(other, { t: 'typing', with: c.account, user: user(c) });
     }
     case 'nick': {
       const name = clean(m.name, LIMITS.name);
       if (name.length < 2) throw Error('Pick a name of at least 2 characters.');
       const old = c.name; c.name = name;
       for (const r of c.rooms) toRoom(r, { t: 'nick', room: r, user: user(c), old });
-      return c.send({ t: 'welcome', id: c.id, name, rooms: roomList(), online: clients.size });
+      return c.send({ t: 'welcome', id: c.id, name, key: ownerKey(c), rooms: roomList(), online: clients.size, presence: onlineAccounts() });
     }
-    // Lobbies: a host advertises a game; joiners ask to join and the two clients exchange pairing codes via 'signal'.
     // Older messages of a room, before a time (the client scrolls back).
     case 'room-history': {
       if (!rooms.has(m.room)) throw Error('No such room.');
@@ -198,32 +315,58 @@ function handle(c, m) {
     // Private messages: between Garry's Web accounts (a name alone is not unique). The socket signs in with the account's
     // session token; messages are kept, and delivered to every connection of both players.
     case 'auth': {
-      const u = accounts.verify(m.user, m.token);
+      const before = c.account, u = accounts.verify(m.user, m.token);
       c.account = u ?? null;
       admin.seen(c);
       if (refuseBanned(c)) return;
-      return c.send({ t: 'authed', user: u ?? null });
+      c.send({ t: 'authed', user: u ?? null, admin: !!u && admin.isAdmin(u), ...(u ? { status: profiles.status(u) } : {}) });
+      if (before !== c.account) { presenceChanged(before); presenceChanged(c.account); }
+      if (u) c.send(friendsView(u));
+      return;
     }
     case 'dm': {
       if (!c.account) throw Error('Sign in to a Garry\'s Web account (Profile) to send private messages.');
-      const to = String(m.to ?? '').toLowerCase(), text = clean(m.text, LIMITS.text);
+      const to = String(m.to ?? '').toLowerCase(), text = clean(m.text, LIMITS.text), attach = attachments(m.attach);
       if (to === c.account) throw Error('That is you.');
       if (!accounts.exists(to)) throw Error(`There is no account called ${to}.`);
-      if (!text) return;
-      const msg = { t: 'dm', from: c.account, name: c.name, to, text, at: Date.now() };
+      if (social.blocks(to, c.account)) throw Error(`${to} is not accepting your messages.`);
+      if (social.blocks(c.account, to)) throw Error(`You blocked ${to}. Unblock them to send messages.`);
+      if (!text && !attach) return;
+      const reply = m.reply ? replyTo(chat.findDm(c.account, to, String(m.reply))) : undefined;
+      const msg = { t: 'dm', id: crypto.randomBytes(6).toString('base64url'), from: c.account, name: c.name, to, text, at: Date.now(), ...(reply ? { reply } : {}), ...(attach ? { attach } : {}) };
       chat.saveDm(c.account, to, msg);
       for (const x of clients) if (x.account === to || x.account === c.account) x.send(msg);
       return;
     }
     case 'dms': {
       if (!c.account) return c.send({ t: 'dms', list: [] });
-      return c.send({ t: 'dms', list: chat.conversations(c.account).map((x) => ({ ...x, online: [...clients].some((y) => y.account === x.with) })) });
+      return c.send({ t: 'dms', list: chat.conversations(c.account).filter((x) => !social.blocks(c.account, x.with)).map((x) => ({ ...x, online: presenceOf(x.with).status !== 'offline' })) });
     }
     case 'dm-history': {
       if (!c.account) throw Error('Sign in first.');
       const other = String(m.with ?? '').toLowerCase();
       return c.send({ t: 'dm-history', with: other, ...chat.dm(c.account, other, 100, +m.before || Infinity) });
     }
+    // Friends (hub/social.mjs). Both players' pages get the new list.
+    case 'friends': if (!c.account) return c.send({ t: 'friends', friends: [], incoming: [], outgoing: [], blocked: [] }); return c.send(friendsView(c.account));
+    case 'friend-add': case 'friend-accept': case 'friend-remove': case 'block': case 'unblock': {
+      if (!c.account) throw Error('Sign in to a Garry\'s Web account to add friends.');
+      const other = String(m.user ?? '').toLowerCase().replace(/^@/, '');
+      if (!accounts.exists(other)) throw Error(`There is no account called ${other}.`);
+      const what = m.t === 'friend-add' ? social.request(c.account, other) : m.t === 'friend-accept' ? social.accept(c.account, other)
+        : m.t === 'friend-remove' ? social.remove(c.account, other) : m.t === 'block' ? social.block(c.account, other) : social.unblock(c.account, other);
+      toAccount(c.account, friendsView(c.account)); toAccount(other, friendsView(other));
+      if (what === 'sent') toAccount(other, { t: 'friend-request', from: c.account, name: c.name, at: Date.now() });
+      if (what === 'accepted') toAccount(other, { t: 'friend-accepted', user: c.account, at: Date.now() });
+      return;
+    }
+    // What the player is doing (the launcher, a menu, a map), shown to friends and in member lists.
+    case 'activity': c.activity = cleanActivity(m.activity); return presenceChanged(c.account);
+    case 'status': {
+      if (!c.account) throw Error('Sign in to set a status.');
+      profiles.setStatus(c.account, String(m.status)); lastPresence.delete(c.account); return presenceChanged(c.account);
+    }
+    case 'presence': return c.send({ t: 'presence-list', users: onlineAccounts() });
     case 'watch-lobbies': c.watching = m.on !== false; return c.send({ t: 'lobbies', lobbies: lobbyList(c) });
     case 'host': {
       const i = m.lobby ?? {};
@@ -260,6 +403,31 @@ process.on('uncaughtException', (err) => {
   console.error(err); process.exit(1);
 });
 const workshop = createWorkshop(), versions = createVersions(), accounts = createAccounts(), servers = createServers({ log: console.log }), steamLogin = createSteamLogin({ log: console.log });
+// Profiles, friends, cloud files and shared saves (Garry's Web accounts). A profile change is announced so open chats redraw it.
+const profiles = createProfiles({ accounts, onChange: (u) => { for (const c of clients) if (c.name) c.send({ t: 'profile', user: u }); lastPresence.delete(u); presenceChanged(u); } });
+const social = createSocial(), cloud = createCloud({ accounts });
+// Pictures posted in chat: signed-in players only, resized by the page first; kept once per content hash.
+const chatImages = blobStore(path.join(process.env.WS_CACHE ?? './ws-cache', 'chat', 'img')), chatUploads = limiter(30, 600e3);
+async function chatUpload(req, res, h, ip) {
+  const url = new URL(req.url, 'http://x');
+  if (!url.pathname.startsWith('/chat/')) return false;
+  const hh = { ...h, 'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-User', 'Access-Control-Allow-Methods': 'GET, POST' };
+  if (req.method === 'OPTIONS') { res.writeHead(204, hh).end(); return true; }
+  try {
+    if (req.method === 'GET' && url.pathname.startsWith('/chat/img/')) { chatImages.serve(res, url.pathname.slice(10), hh); return true; }
+    if (req.method === 'POST' && url.pathname === '/chat/upload') {
+      const u = accounts.userOf(req);
+      if (!u) throw fail(401, 'Sign in to post pictures.');
+      if (!chatUploads(u) || !chatUploads('ip:' + ip)) throw fail(429, 'Too many pictures. Wait a few minutes.');
+      if (admin.muted({ ip, account: u })) throw fail(403, 'You are muted.');
+      const b = await bytes(req, 4 * 1048576), t = imageType(b);
+      if (!t) throw fail(415, 'Pictures must be PNG, JPEG, WebP or GIF.');
+      return json(res, 200, { name: chatImages.put(b, t.ext) }, hh), true;
+    }
+    throw fail(404, 'Not found');
+  } catch (e) { json(res, e.status ?? 400, { error: String(e.message ?? e) }, hh); }
+  return true;
+}
 // ---- Admin (hub/admin.mjs) --------------------------------------------------------------------------------------------
 const admin = createAdmin({ accounts, hub: {
   counts: () => ({ clients: clients.size, relays: relays.size, pairs: pairs.size, lobbyCount: lobbies.size }),
@@ -279,6 +447,7 @@ const admin = createAdmin({ accounts, hub: {
   announce(text) { for (const c of clients) if (c.name) c.send({ t: 'notice', text, at: Date.now() }); return clients.size; },
   closeLobby(id) { const l = lobbies.get(id); if (!l) throw Error('That game is already closed.'); l.host.send({ t: 'lobby-closed', id }); dropLobby(id); },
 } });
+const shares = createShares({ accounts, isAdmin: (u) => admin.isAdmin(u) });
 // A banned player's socket is told why, then closed (the page stops reconnecting).
 function refuseBanned(c) {
   const b = admin.banned({ ip: c.ip, device: c.device, account: c.account });
@@ -297,6 +466,10 @@ const server = http.createServer(async (req, res) => {
   if (await accounts(req, res, { ip: clientIp(req), headers: cors(req) })) return;
   if (await servers.handle(req, res, { ip: clientIp(req), headers: cors(req) })) return;
   if (await steamLogin(req, res, { ip: clientIp(req), headers: cors(req) })) return;
+  if (await profiles(req, res, { ip: clientIp(req), headers: cors(req) })) return;
+  if (await cloud(req, res, { ip: clientIp(req), headers: cors(req) })) return;
+  if (await shares(req, res, { ip: clientIp(req), headers: cors(req) })) return;
+  if (await chatUpload(req, res, cors(req), clientIp(req))) return;
   if (req.url === '/health' || req.url === '/status') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...cors(req) });
     return res.end(JSON.stringify({ ok: true, online: clients.size, rooms: roomList(), lobbies: lobbies.size }));

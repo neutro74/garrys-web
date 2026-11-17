@@ -14,33 +14,56 @@ export function createChatStore({ dir = path.join(process.env.WS_CACHE ?? './ws-
   const dmFile = (a, b) => { if (!USER.test(a) || !USER.test(b)) throw Error('Bad username.'); return path.join(dir, 'dm', pair(a, b).join('~') + '.jsonl'); };
   const append = (file, msg) => fs.appendFileSync(file, JSON.stringify(msg) + '\n');
 
-  // Up to n messages older than `before` (ms; Infinity for the newest), oldest first, read backwards in 64 KB blocks.
-  function page(file, n, before = Infinity) {
+  // Every line of a file from the newest back, as parsed objects, until fn returns true.
+  function backwards(file, fn) {
     let fd;
-    try { fd = fs.openSync(file, 'r'); } catch { return { messages: [], done: true }; }
+    try { fd = fs.openSync(file, 'r'); } catch { return; }
     try {
-      const size = fs.fstatSync(fd).size, out = [], gone = new Set();
-      let cleared = false;
-      let end = size, carry = Buffer.alloc(0);
-      while (end > 0 && out.length < n) {
+      let end = fs.fstatSync(fd).size, carry = Buffer.alloc(0);
+      while (end > 0) {
         const start = Math.max(0, end - 65536), buf = Buffer.alloc(end - start);
         fs.readSync(fd, buf, 0, buf.length, start);
-        let data = Buffer.concat([buf, carry]), cut = start > 0 ? data.indexOf(10) : -1;
+        let data = Buffer.concat([buf, carry]); const cut = start > 0 ? data.indexOf(10) : -1;
         carry = cut >= 0 ? data.subarray(0, cut) : Buffer.alloc(0);
         if (cut >= 0) data = data.subarray(cut + 1);
         const lines = data.toString('utf8').split('\n').filter(Boolean);
-        for (let i = lines.length - 1; i >= 0 && out.length < n && !cleared; i--) {
-          let m; try { m = JSON.parse(lines[i]); } catch { continue; }   // a torn line
-          // Moderation marks (hub/admin.mjs), read before the messages they apply to since the file is read backwards.
-          if (m.del) { gone.add(m.del); continue; }
-          if (m.clear) { cleared = true; break; }
-          if (m.at < before && !gone.has(m.id)) out.push(m);
-        }
+        for (let i = lines.length - 1; i >= 0; i--) { let m; try { m = JSON.parse(lines[i]); } catch { continue; } if (fn(m)) return; }
         end = start;
       }
-      if (cleared) return { messages: out.reverse(), done: true };
-      return { messages: out.reverse(), done: out.length < n };
     } finally { fs.closeSync(fd); }
+  }
+  // Up to n messages older than `before` (ms; Infinity for the newest), oldest first. Later marks (moderation, edits,
+  // reactions) are met before the messages they change, since the file is read backwards, so the first one met is the latest.
+  function page(file, n, before = Infinity) {
+    const out = [], gone = new Set(), edits = new Map(), reacts = new Map();
+    let cleared = false;
+    backwards(file, (m) => {
+      if (m.del) { gone.add(m.del); return false; }
+      if (m.clear) { cleared = true; return true; }
+      if (m.edit) { if (!edits.has(m.edit)) edits.set(m.edit, m); return false; }
+      if (m.react) { const k = `${m.react}\u0000${m.emoji}\u0000${m.by}`; if (!reacts.has(k)) reacts.set(k, m); return false; }
+      if (m.at < before && !gone.has(m.id)) out.push(m);
+      return out.length >= n;
+    });
+    // Reactions grouped per message: { emoji: [who, ...] }.
+    const byMsg = new Map();
+    for (const r of reacts.values()) if (r.on) { const e = byMsg.get(r.react) ?? {}; (e[r.emoji] ??= []).push(r.by); byMsg.set(r.react, e); }
+    for (const m of out) {
+      const e = m.id && edits.get(m.id); if (e) { m.text = e.text; m.edited = e.at; }
+      const r = m.id && byMsg.get(m.id); if (r) m.reactions = r;
+    }
+    return { messages: out.reverse(), done: cleared || out.length < n };
+  }
+  // One message by id (newest files first; looks back at most `limit` lines), with its current text, or null.
+  function find(file, id, limit = 20000) {
+    let found = null, seen = 0, deleted = false;
+    backwards(file, (m) => {
+      if (m.del === id) { deleted = true; return true; }
+      if (m.clear) return true;
+      if (m.id === id) { found = m; return true; }
+      return ++seen > limit;
+    });
+    return deleted ? null : found;
   }
 
   return {
@@ -49,6 +72,11 @@ export function createChatStore({ dir = path.join(process.env.WS_CACHE ?? './ws-
     deleteRoomMessage(room, id) { append(roomFile(room), { del: String(id), at: Date.now() }); },
     clearRoom(room) { append(roomFile(room), { clear: true, at: Date.now() }); },
     room(room, n = 100, before) { return page(roomFile(room), n, before); },
+    findRoom(room, id) { return find(roomFile(room), String(id)); },
+    findDm(a, b, id) { return find(dmFile(a, b), String(id)); },
+    // Edits and reactions are appended marks, like deletions; reading applies them.
+    markRoom(room, mark) { append(roomFile(room), { ...mark, at: Date.now() }); },
+    markDm(a, b, mark) { append(dmFile(a, b), { ...mark, at: Date.now() }); },
     saveDm(a, b, msg) { append(dmFile(a, b), msg); },
     dm(a, b, n = 100, before) { return page(dmFile(a, b), n, before); },
     // A player's conversations, newest first, each with its last message.

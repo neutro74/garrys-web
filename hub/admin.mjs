@@ -240,6 +240,7 @@ export function createAdmin({ accounts, hub }) {
   };
 
   handle.banned = banned;
+  handle.isAdmin = (u) => ADMINS.has(String(u ?? ""));
   handle.muted = muted;
   handle.banInfo = banInfo;
   handle.seen = seen;

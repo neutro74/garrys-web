@@ -15,6 +15,9 @@ export const account = () => { try { return JSON.parse(ls.get('account') ?? 'nul
 const saveAccount = (a) => ls.set('account', a ? JSON.stringify(a) : null);
 const snapshot = () => Object.fromEntries(KEYS.map((k) => [k, ls.get(k)]).filter(([, v]) => v !== null));
 const digest = (o) => JSON.stringify(o);
+// What the account itself holds, in the same form as snapshot(). After pulling, this (not this browser's settings) is what
+// counts as synced, so anything only this browser has (a Steam sign-in the account lacks) is sent on the next push.
+const docSnap = (doc) => Object.fromEntries(KEYS.map((k) => [k, doc?.[k] ?? null]).filter(([, v]) => v !== null));
 // A Steam sign-in missing from the account's copy leaves this browser's own in place (see hub/accounts.mjs).
 function apply(doc) { for (const k of KEYS) if (k !== 'steam' || doc?.steam != null) ls.set(k, doc?.[k] ?? null); }
 
@@ -34,7 +37,7 @@ async function api(path, { method = 'GET', body, auth = true } = {}) {
 async function signIn(route, user, pass) {
   const r = await api(route, { method: 'POST', body: { user, pass }, auth: false });
   saveAccount({ user: r.user, token: r.token, updated: r.updated, synced: '' });
-  if (r.updated && Object.keys(r.doc ?? {}).length) { apply(r.doc); saveAccount({ ...account(), synced: digest(snapshot()) }); }
+  if (r.updated && Object.keys(r.doc ?? {}).length) { apply(r.doc); saveAccount({ ...account(), synced: digest(docSnap(r.doc)) }); }
   else await push();   // a new (empty) account starts from this browser's settings
   return r.user;
 }
@@ -56,7 +59,7 @@ export async function sync() {
   const a = account();
   if (!a) return 'signed-out';
   const r = await api('acct/me');
-  if (r.updated > (a.updated ?? 0)) { apply(r.doc); saveAccount({ ...account(), updated: r.updated, synced: digest(snapshot()) }); return 'pulled'; }
+  if (r.updated > (a.updated ?? 0)) { apply(r.doc); saveAccount({ ...account(), updated: r.updated, synced: digest(docSnap(r.doc)) }); return 'pulled'; }
   await push();
   return 'pushed';
 }

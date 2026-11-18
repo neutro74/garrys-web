@@ -796,16 +796,18 @@ function menu(ext, backdrop, opts = {}) {
     }).catch(() => {});
 
     let went = false;
-    const teardown = () => {
+    // Starting the game keeps the hub connection (the game runs in this same page and its overlay uses it), so a voice
+    // channel, private messages and presence carry on without a reconnect; signing in or out starts it again.
+    const teardown = ({ keepHub = false } = {}) => {
       went = true;
-      chat?.destroy(); admin?.destroy(); for (const off of hubOffs) off(); hub.close();
+      chat?.destroy(); admin?.destroy(); for (const off of hubOffs) off(); if (!keepHub) hub.close();
       document.removeEventListener('keydown', onKey); document.removeEventListener('fullscreenchange', fsLabel);
       toasts.remove(); root.querySelector('.gwl-about')?.remove();
     };
     // save: 'saves/x.gms' to load as soon as the game's menu is up (Continue, Play on a save).
     const play = (id, gv = null, save = null) => {
       if (went) return;
-      teardown(); edition = id; if (!gv) store.set('edition', id);
+      teardown({ keepHub: true }); edition = id; if (!gv) store.set('edition', id);
       win.classList.add('leave');
       setTimeout(() => { win.remove(); resolve({ edition, scale: QUALITY[quality].scale, version: gv, save }); }, reducedMotion ? 0 : 300);
     };

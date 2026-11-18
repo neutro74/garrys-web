@@ -98,10 +98,42 @@ export async function launch({ width = 1280, height = 720, gpu = false, webgpu =
   await send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
   on('Target.detachedFromTarget', ({ sessionId }) => sessions.delete(sessionId));
 
+  // Another page in this same browser, in its own browser context (separate storage, like a second person on another
+  // computer): two players without a second Chromium. Returns { goto, eval, screenshot, on, close }.
+  let browserWs = null, bNext = 1;
+  const bPending = new Map(), bListeners = new Map();
+  async function browserSend(method, params = {}, sessionId) {
+    if (!browserWs) {
+      browserWs = new WebSocket(wsUrl);
+      await new Promise((r) => browserWs.addEventListener('open', r, { once: true }));
+      browserWs.addEventListener('message', (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.id && bPending.has(msg.id)) { const { resolve, reject } = bPending.get(msg.id); bPending.delete(msg.id); msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result); }
+        else if (msg.method) for (const fn of bListeners.get(`${msg.sessionId ?? ''} ${msg.method}`) ?? []) fn(msg.params);
+      });
+    }
+    return new Promise((resolve, reject) => { const id = bNext++; bPending.set(id, { resolve, reject }); browserWs.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })); });
+  }
+  async function newContextPage() {
+    const { browserContextId } = await browserSend('Target.createBrowserContext', { disposeOnDetach: true });
+    const { targetId } = await browserSend('Target.createTarget', { url: 'about:blank', browserContextId, width, height });
+    const { sessionId } = await browserSend('Target.attachToTarget', { targetId, flatten: true });
+    const sendS = (m, p) => browserSend(m, p, sessionId);
+    await sendS('Page.enable'); await sendS('Runtime.enable');
+    return {
+      on: (method, fn) => { const k = `${sessionId} ${method}`; bListeners.set(k, [...(bListeners.get(k) ?? []), fn]); },
+      async goto(url) { await sendS('Page.navigate', { url }); },
+      async screenshot(file) { const { data } = await sendS('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(file, Buffer.from(data, 'base64')); },
+      async eval(expression) { const r = await sendS('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }); return r.result.value; },
+      async close() { await browserSend('Target.closeTarget', { targetId }).catch(() => {}); await browserSend('Target.disposeBrowserContext', { browserContextId }).catch(() => {}); },
+    };
+  }
+
   return {
     send,
     on,
     sessions,
+    newContextPage,
     // JS heap in use per isolate: [{ url, usedMB }], the page first.
     async heaps() {
       const out = [];
@@ -125,7 +157,7 @@ export async function launch({ width = 1280, height = 720, gpu = false, webgpu =
       return r.result.value;
     },
     async close() {
-      try { ws.close(); } catch {}
+      try { ws.close(); browserWs?.close(); } catch {}
       proc.kill('SIGTERM');
       await new Promise((r) => (proc.exitCode !== null ? r() : proc.once('exit', r)));
       if (!profile) try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}

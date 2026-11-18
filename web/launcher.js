@@ -585,7 +585,7 @@ function menu(ext, backdrop, opts = {}) {
     const warn = problems(), hub = sharedHub();
     // Garry's Web is a fan project: say so, and whose the game is.
     const legal = `Garry's Web is an unofficial fan project, not affiliated with Facepunch Studios or Valve. ${ext ? "Garry's Mod and the bundled games belong to Facepunch Studios and Valve; addons belong to their Workshop authors." : "Garry's Mod belongs to Facepunch Studios and Valve."}`;
-    const TABS = [['play', 'Play', 'controller'], ['saves', 'Saves', 'disk'], ...(hub.url ? [['chat', 'Chat', 'comments'], ['friends', 'Friends', 'group']] : []),
+    const TABS = [['play', 'Play', 'controller'], ['saves', 'Saves', 'disk'], ...(hub.url ? [['workshop', 'Workshop', 'brick'], ['chat', 'Chat', 'comments'], ['friends', 'Friends', 'group']] : []),
       ['versions', 'Versions', 'package'], ['profile', 'Profile', 'user'], ['options', 'Options', 'cog']];
 
     const win = document.createElement('div');
@@ -623,7 +623,7 @@ function menu(ext, backdrop, opts = {}) {
     drawMe();
 
     // ---- Tabs ----
-    let tab = null, adminMount = null;
+    let tab = null, adminMount = null, workshop = null;
     const drawn = new Set();
     function show(k) {
       if (k === tab) { if (k === 'saves' || k === 'versions' || k === 'options') fill(k); return; }
@@ -636,6 +636,7 @@ function menu(ext, backdrop, opts = {}) {
         chat.visible(true); chat.focus();
       } else chat?.visible(false);
       if (k === 'admin') adminMount?.(); else admin?.visible(false);
+      workshop?.visible(k === 'workshop');
       badges();
       if (!drawn.has(k) || k === 'saves' || k === 'options') fill(k);
     }
@@ -645,6 +646,8 @@ function menu(ext, backdrop, opts = {}) {
       if (k === 'play') return;
       if (k === 'options') return drawOptions(el);
       if (k === 'chat' || k === 'friends' || k === 'admin') return;
+      // The Workshop tab (web/workshop-tab.js) is made once and kept, so its list and downloads survive tab switches.
+      if (k === 'workshop') { if (!workshop) import('./workshop-tab.js').then(({ mountWorkshop }) => { workshop = mountWorkshop(el); workshop.visible(tab === 'workshop'); }); return; }
       el.replaceChildren(); const p = document.createElement('div'); p.className = 'panel gwl-panel'; el.append(p);
       if (k === 'saves') savesPanel(p, { highlight: opts.highlightSave, sharedNote: opts.sharedNote, onPlaySave: (file) => play(edition, null, file) });
       else if (k === 'versions') versionsPanel(p, { ext, highlight: opts.highlight, onPlay: (v) => play(v.edition, v) });
@@ -803,7 +806,7 @@ function menu(ext, backdrop, opts = {}) {
     // channel, private messages and presence carry on without a reconnect; signing in or out starts it again.
     const teardown = ({ keepHub = false } = {}) => {
       went = true;
-      chat?.destroy(); admin?.destroy(); for (const off of hubOffs) off(); if (!keepHub) hub.close();
+      chat?.destroy(); admin?.destroy(); workshop?.destroy(); for (const off of hubOffs) off(); if (!keepHub) hub.close();
       document.removeEventListener('keydown', onKey); document.removeEventListener('fullscreenchange', fsLabel);
       toasts.remove(); root.querySelector('.gwl-about')?.remove();
     };

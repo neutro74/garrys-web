@@ -23,6 +23,14 @@ export function dropMeta(name) { const m = libraryMeta(); delete m[name]; store.
 
 // ---- Files ----
 const libDir = async () => (await navigator.storage.getDirectory()).getDirectoryHandle('garrys-wasm-library', { create: true });
+// Takes an addon out of the library (the launcher's Workshop tab). A file a saved version still lists is kept, only no longer
+// loaded by default. Returns true when the file was deleted.
+export async function removeFromLibrary(name) {
+  if (versions().some((v) => v.addons.some((a) => a.name === name))) { updateMeta(name, { global: false }); return false; }
+  await (await libDir()).removeEntry(name).catch(() => {});
+  dropMeta(name);
+  return true;
+}
 export async function hasFile(name) { try { await (await libDir()).getFileHandle(name); return true; } catch { return false; } }
 // Streams a body (Response, Blob or ReadableStream) into the library under `name`, reporting bytes written.
 export async function writeFile(name, body, onProgress = () => {}) {

@@ -4,7 +4,7 @@
 // Both screens copy the game's own pages (main menu: html/template/main.html; loading: html/loading.html) and use
 // their stock images, so the launcher looks like the game it starts and nothing extra ships.
 
-import { sharedHub, hubStatus, playerId, hubReach, askLocalAccess } from './hub.js';
+import { sharedHub, hubStatus, playerId } from './hub.js';
 import { mountChat, chatStyles, STATUS } from './chat-app.js';
 import { myProfile, saveProfile, uploadImage, removeImage, resizeImage, avatarEl, imageUrl, displayName, nameHue, getProfile, cachedProfile } from './profiles.js';
 import { dermaReady, icon } from './derma.js';
@@ -140,8 +140,6 @@ async function extendedInfo() {
 // open panels in the card's place (chat, the files this browser keeps, controls). The bottom strip is its NavBar,
 // with the graphics preset where the game has its gamemode chooser.
 const WHATS_NEW = [
-  ['Browser', 'A web browser tab: open any site from the launcher, even ones that refuse to open inside other pages.'],
-  ['Pings and automod', 'Mentions and replies wait in your inbox, @ suggests names, and automod keeps chat clean.'],
   ['A launcher of its own', 'One window in GMod\'s own Derma style, with tabs for playing, saves, chat, friends and versions.'],
   ['Chat, rebuilt', 'Channels, private messages, replies, pictures, mentions and edits. Press Shift+Tab in game to chat without leaving it.'],
   ['Friends', 'Add friends, see who is online and what they are playing, and message them from anywhere.'],
@@ -586,7 +584,7 @@ function menu(ext, backdrop, opts = {}) {
     const warn = problems(), hub = sharedHub();
     // Garry's Web is a fan project: say so, and whose the game is.
     const legal = `Garry's Web is an unofficial fan project, not affiliated with Facepunch Studios or Valve. ${ext ? "Garry's Mod and the bundled games belong to Facepunch Studios and Valve; addons belong to their Workshop authors." : "Garry's Mod belongs to Facepunch Studios and Valve."}`;
-    const TABS = [['play', 'Play', 'controller'], ['saves', 'Saves', 'disk'], ...(hub.url ? [['chat', 'Chat', 'comments'], ['friends', 'Friends', 'group'], ['browser', 'Browser', 'world']] : []),
+    const TABS = [['play', 'Play', 'controller'], ['saves', 'Saves', 'disk'], ...(hub.url ? [['chat', 'Chat', 'comments'], ['friends', 'Friends', 'group']] : []),
       ['versions', 'Versions', 'package'], ['profile', 'Profile', 'user'], ['options', 'Options', 'cog']];
 
     const win = document.createElement('div');
@@ -608,18 +606,7 @@ function menu(ext, backdrop, opts = {}) {
     backdrop.onChange = (c) => { $('[data-credit]').textContent = `“${c.title}” by ${c.author} ·`; };
     if (backdrop.current) backdrop.onChange(credit(backdrop.current));
     const showOnline = (n) => { $('[data-online]').textContent = n ? `${n} online` : ''; $('[data-onlinedot]').hidden = !n; };
-    if (hub.url) hubStatus(hub.url).then((s) => { showOnline(s?.online); if (!s) checkBlocked(); });
-    // The browser refusing to reach the server (Chrome's Local Network Access, seen on school networks): say what to do.
-    async function checkBlocked() {
-      if ((await hubReach(hub.url)) !== 'blocked' || win.querySelector('.gwl-lna')) return;
-      const n = document.createElement('div'); n.className = 'dk-panel gwl-lna'; n.setAttribute('role', 'alert');
-      n.innerHTML = `<img class="si" src="${icon('error')}" alt=""><div><b>Your browser is blocking the connection to the Garry's Web server</b>
-        <span>Chat, friends, profiles and cloud saves need it. Click <b>Allow connection</b> and choose <b>Allow</b>. If nothing pops up: click the icon at the left of the address bar, open <b>Site settings</b>, set <b>Local network access</b> to <b>Allow</b>, then reload. (On a school or work device this setting may be locked.)</span></div>
-        <button type="button" class="dk-btn blue" data-lna>Allow connection</button><button type="button" class="dk-wbtn close" data-lnax aria-label="Hide"></button>`;
-      n.querySelector('[data-lna]').onclick = async (ev) => { ev.target.disabled = true; if (await askLocalAccess(hub.url)) location.reload(); else { ev.target.disabled = false; n.querySelector('span').insertAdjacentHTML('beforeend', ' <b>Still blocked: use Site settings as above.</b>'); } };
-      n.querySelector('[data-lnax]').onclick = () => n.remove();
-      $('.dk-tabbody').before(n);
-    }
+    if (hub.url) hubStatus(hub.url).then((s) => showOnline(s?.online));
     const fsBtn = $('[data-fs]');
     fsBtn.onclick = () => { if (document.fullscreenElement) document.exitFullscreen?.(); else document.documentElement.requestFullscreen?.().catch(() => {}); };
     const fsLabel = () => { fsBtn.dataset.tip = document.fullscreenElement ? 'Leave fullscreen' : 'Fullscreen'; };
@@ -635,7 +622,7 @@ function menu(ext, backdrop, opts = {}) {
     drawMe();
 
     // ---- Tabs ----
-    let tab = null, adminMount = null, browser = null;
+    let tab = null, adminMount = null;
     const drawn = new Set();
     function show(k) {
       if (k === tab) { if (k === 'saves' || k === 'versions' || k === 'options') fill(k); return; }
@@ -648,7 +635,6 @@ function menu(ext, backdrop, opts = {}) {
         chat.visible(true); chat.focus();
       } else chat?.visible(false);
       if (k === 'admin') adminMount?.(); else admin?.visible(false);
-      browser?.visible(k === 'browser');
       badges();
       if (!drawn.has(k) || k === 'saves' || k === 'options') fill(k);
     }
@@ -658,8 +644,6 @@ function menu(ext, backdrop, opts = {}) {
       if (k === 'play') return;
       if (k === 'options') return drawOptions(el);
       if (k === 'chat' || k === 'friends' || k === 'admin') return;
-      // The Browser tab (web/browser-tab.js) is made once and kept, so the open page stays while other tabs are used.
-      if (k === 'browser') { if (!browser) import('./browser-tab.js').then(({ mountBrowser }) => { browser = mountBrowser(el); browser.visible(tab === 'browser'); }); return; }
       el.replaceChildren(); const p = document.createElement('div'); p.className = 'panel gwl-panel'; el.append(p);
       if (k === 'saves') savesPanel(p, { highlight: opts.highlightSave, sharedNote: opts.sharedNote, onPlaySave: (file) => play(edition, null, file) });
       else if (k === 'versions') versionsPanel(p, { ext, highlight: opts.highlight, onPlay: (v) => play(v.edition, v) });
@@ -816,7 +800,7 @@ function menu(ext, backdrop, opts = {}) {
     // channel, private messages and presence carry on without a reconnect; signing in or out starts it again.
     const teardown = ({ keepHub = false } = {}) => {
       went = true;
-      chat?.destroy(); admin?.destroy(); browser?.destroy(); for (const off of hubOffs) off(); if (!keepHub) hub.close();
+      chat?.destroy(); admin?.destroy(); for (const off of hubOffs) off(); if (!keepHub) hub.close();
       document.removeEventListener('keydown', onKey); document.removeEventListener('fullscreenchange', fsLabel);
       toasts.remove(); root.querySelector('.gwl-about')?.remove();
     };

@@ -219,30 +219,3 @@ test('profiles, cloud files and shared saves', async () => {
   assert.equal((await fetch(`${base}/share/${shared.code}`, { method: 'DELETE', headers: a.auth })).status, 200);
   a.c.ws.close();
 });
-
-// The web proxy (hub/proxy.mjs). Reaches the internet (example.com); local and private addresses must be refused.
-test('web proxy: sessions, page rewriting, CORS, blocked addresses', async () => {
-  const base = `http://127.0.0.1:${PORT}`, a = await account('pxy');
-  assert.equal((await fetch(base + '/proxy/session', { method: 'POST' })).status, 401);
-  const { token, prefix } = await (await fetch(base + '/proxy/session', { method: 'POST', headers: a.auth })).json();
-  assert.ok(token); assert.equal(prefix, `/p/${token}/`);
-  assert.equal((await fetch(`${base}/p/nope/https/example.com/`)).status, 401);
-  for (const bad of ['http://127.0.0.1:' + PORT + '/health', 'http://localhost/', 'http://10.0.0.1/', 'http://169.254.169.254/latest/meta-data/', 'http://[::1]/', 'http://localtest.me/', 'https://homelab.tail40e4e3.ts.net/', 'ftp://example.com/', 'http://example.com:22/']) {
-    const r = await fetch(`${base}/cors?url=${encodeURIComponent(bad)}`, { headers: { 'X-Proxy-Token': token } });
-    assert.ok([400, 403].includes(r.status), `${bad} -> ${r.status}`);
-  }
-  assert.equal((await fetch(`${base}/cors?url=https://example.com/`)).status, 401);
-  let online = true;
-  try { await fetch('https://example.com/', { signal: AbortSignal.timeout(5000) }); } catch { online = false; }
-  if (!online) return;   // no internet here: the rest needs it
-  const page = await fetch(`${base}${prefix}https/example.com/`);
-  assert.equal(page.status, 200); assert.equal(page.headers.get('access-control-allow-origin'), '*');
-  assert.equal(page.headers.get('cross-origin-embedder-policy'), 'credentialless');
-  const html = await page.text();
-  assert.match(html, /\/proxy\/client\.js/); assert.match(html, new RegExp(`src="${prefix}https/example\\.com/`));   // a root-relative script, sent back through the proxy
-  const raw = await fetch(`${base}/cors?url=https://example.com/`, { headers: { 'X-Proxy-Token': token } });
-  assert.equal(raw.headers.get('access-control-allow-origin'), '*'); assert.match(await raw.text(), /Example Domain/);
-  assert.equal((await fetch(`${base}/proxy/client.js`)).status, 200);
-  a.c.ws.close();
-});
-

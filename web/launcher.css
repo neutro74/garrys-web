@@ -317,34 +317,3 @@ html:not(.dk-ready) .gw-toast { background: #fff5af; border: 1px solid #000; }
 #launcher .am-text { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--dk-mid); }
 #launcher .am-text textarea { width: 100%; box-sizing: border-box; resize: vertical; font: 12px monospace; }
 #launcher .am .bad { color: #c22; }
-
-/* Browser tab (web/browser-tab.js) */
-#launcher .gwb { display: flex; flex-direction: column; gap: 4px; height: 100%; min-height: 0; }
-#launcher .gwb-bar { display: flex; align-items: center; gap: 3px; }
-#launcher .gwb-bar > .dk-btn { padding: 0 5px; }
-#launcher .gwb-bar > .dk-btn:disabled { opacity: .45; }
-#launcher .gwb-addr { flex: 1; display: flex; align-items: center; gap: 4px; min-width: 0; margin-left: 4px; padding-left: 4px; }
-#launcher .gwb-addr input { flex: 1; min-width: 0; }
-#launcher .gwb-view { position: relative; flex: 1; min-height: 0; border: 1px solid #777; background: #fff; }
-#launcher .gwb-view iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
-#launcher .gwb-view iframe[hidden], #launcher .gwb-start[hidden], #launcher .gwb-loading[hidden] { display: none; }
-#launcher .gwb-start { position: absolute; inset: 0; overflow: auto; display: grid; place-items: start center; padding: 40px 16px; background: #e8e9ea; }
-#launcher .gwb-home { width: min(620px, 100%); display: flex; flex-direction: column; gap: 10px; padding: 14px; }
-#launcher .gwb-home h2 { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 20px; }
-#launcher .gwb-search { display: flex; gap: 4px; }
-#launcher .gwb-search input { flex: 1; min-width: 0; font-size: 14px; padding: 4px 6px; }
-#launcher .gwb-shortcuts { display: flex; flex-wrap: wrap; gap: 4px; }
-#launcher .gwb-shortcuts .dk-btn { display: inline-flex; align-items: center; gap: 5px; }
-#launcher .gwb-err { color: #b22; margin: 0; }
-#launcher .gwb-loading { position: absolute; left: 0; right: 0; top: 0; height: 3px; overflow: hidden; pointer-events: none; }
-#launcher .gwb-loading span { position: absolute; top: 0; bottom: 0; width: 30%; background: var(--dk-sel, #3b8beb); animation: gwb-load 1.1s ease-in-out infinite; }
-@keyframes gwb-load { from { left: -30%; } to { left: 100%; } }
-#launcher .gwb-status { min-height: 16px; font-size: 11px; color: var(--dk-mid); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-@media (prefers-reduced-motion: reduce) { #launcher .gwb-loading span { animation: none; left: 0; width: 100%; opacity: .5; } }
-
-/* The browser blocks the hub (Local Network Access): a notice above the tabs */
-#launcher .gwl-lna { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 4px; padding: 6px 8px; background: #fff4c2; border: 1px solid #c9a227; }
-#launcher .gwl-lna > div { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
-#launcher .gwl-lna span { font-size: 12px; white-space: normal; }
-#launcher .gwl-lna .dk-btn { flex: none; align-self: center; }
-#launcher .gwl-lna .dk-wbtn { flex: none; }

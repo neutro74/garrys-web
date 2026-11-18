@@ -123,26 +123,3 @@ export async function hubStatus(url = hubUrl()) {
     return r.ok ? await r.json() : null;
   } catch { return null; }
 }
-
-// Is the browser itself refusing to reach the hub? Chrome's Local Network Access check blocks a public page from connecting
-// to an address it thinks is on the local network, which happens where the network's DNS answers with a local address for
-// the hub (school and office filters, or Tailscale's own DNS). Then nothing reaches the hub until the site is allowed.
-// Returns 'ok', 'blocked' (the permission is refused or not yet given and the hub cannot be reached) or 'down'.
-export async function hubReach(url = hubUrl()) {
-  if (!url) return 'down';
-  const health = url.replace(/^ws/, 'http').replace(/\/?$/, '/health');
-  try { const r = await fetch(health, { cache: 'no-store', signal: AbortSignal.timeout(6000) }); if (r.ok) return 'ok'; return 'down'; } catch { /* see why */ }
-  for (const name of ['local-network-access', 'local-network', 'loopback-network']) {
-    try { const st = (await navigator.permissions.query({ name })).state; if (st !== 'granted') return 'blocked'; } catch { /* this browser has no such permission */ }
-  }
-  return 'down';
-}
-// Ask the browser for that permission (needs a click): Chrome shows its "access devices on your local network" prompt.
-export async function askLocalAccess(url = hubUrl()) {
-  const health = url.replace(/^ws/, 'http').replace(/\/?$/, '/health');
-  for (const space of ['local', 'private']) {
-    try { const r = await fetch(health, { cache: 'no-store', targetAddressSpace: space }); if (r.ok) return true; } catch { /* refused, or this name is not known */ }
-  }
-  return false;
-}
-

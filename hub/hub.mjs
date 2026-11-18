@@ -22,7 +22,6 @@ import { createSocial } from './social.mjs';
 import { createEmotes } from './emotes.mjs';
 import { createVoice } from './voice.mjs';
 import { createAutomod } from './automod.mjs';
-import { createProxy } from './proxy.mjs';
 import { json, fail, bytes, imageType, blobStore, limiter } from './http-util.mjs';
 import path from 'node:path';
 
@@ -503,8 +502,6 @@ const admin = createAdmin({ accounts, automod: () => automod, hub: {
 // Automod: admins are not checked; repeat offenders are muted through the admin panel's mutes (so admins see and lift them).
 const automod = createAutomod({ isAdmin: (c) => !!c.account && admin.isAdmin(c.account), accountAge: (u) => Date.now() - (accounts.created(u) || 0),
   mute: (target, minutes, reason) => admin.autoMute(target, minutes, reason) });
-// The web proxy for the launcher's Browser tab and a CORS proxy (hub/proxy.mjs): signed-in accounts only.
-const proxy = createProxy({ accounts, log: console.log, banned: (p) => admin.banned(p) });
 const shares = createShares({ accounts, isAdmin: (u) => admin.isAdmin(u) });
 // Custom emojis and stickers (admins add them) and GIF links copied into the chat picture store (hub/emotes.mjs).
 const emotes = createEmotes({ accounts, isAdmin: (u) => admin.isAdmin(u), chatImages, muted: (who) => admin.muted(who), log: console.log,
@@ -524,7 +521,6 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(403, { 'Content-Type': 'application/json', ...cors(req) });
     return res.end(JSON.stringify({ error: 'You are banned from Garry\'s Web.', banned: true, ...admin.banInfo(ban) }));
   }
-  if (await proxy(req, res, { ip: clientIp(req), headers: cors(req) })) return;
   if (await workshop(req, res, { ip: clientIp(req), headers: cors(req) })) return;
   if (await versions(req, res, { ip: clientIp(req), headers: cors(req) })) return;
   if (await accounts(req, res, { ip: clientIp(req), headers: cors(req) })) return;

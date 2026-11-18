@@ -4,7 +4,7 @@
 // Both screens copy the game's own pages (main menu: html/template/main.html; loading: html/loading.html) and use
 // their stock images, so the launcher looks like the game it starts and nothing extra ships.
 
-import { sharedHub, hubStatus, playerId } from './hub.js';
+import { sharedHub, hubStatus, playerId, hubUrl, requestHubAccess } from './hub.js';
 import { mountChat, chatStyles, STATUS } from './chat-app.js';
 import { myProfile, saveProfile, uploadImage, removeImage, resizeImage, avatarEl, imageUrl, displayName, nameHue, getProfile, cachedProfile } from './profiles.js';
 import { dermaReady, icon } from './derma.js';
@@ -140,6 +140,7 @@ async function extendedInfo() {
 // open panels in the card's place (chat, the files this browser keeps, controls). The bottom strip is its NavBar,
 // with the graphics preset where the game has its gamemode chooser.
 const WHATS_NEW = [
+  ['Pings and automod', 'Mentions and replies wait in your inbox, @ suggests names, and automod keeps chat clean.'],
   ['A launcher of its own', 'One window in GMod\'s own Derma style, with tabs for playing, saves, chat, friends and versions.'],
   ['Chat, rebuilt', 'Channels, private messages, replies, pictures, mentions and edits. Press Shift+Tab in game to chat without leaving it.'],
   ['Friends', 'Add friends, see who is online and what they are playing, and message them from anywhere.'],
@@ -951,6 +952,11 @@ function loading(sel, backdrop) {
 
 // ---- Start -----------------------------------------------------------------------------------------------------
 async function start() {
+  // Ask for access to the server while the splash is still up (see requestHubAccess); a prompt then comes now, not mid-menu.
+  if (hubUrl()) {
+    statusEl.textContent = 'Connecting to the Garry\'s Web server...';
+    await requestHubAccess({ onWait: () => { statusEl.textContent = 'Connecting to the Garry\'s Web server... If your browser asks to allow access to devices on your local network, choose Allow.'; } });
+  }
   document.body.classList.add('launcher-ready');
   root.hidden = false;
   root.innerHTML = '<div class="backdrop"></div><div class="vignette"></div>';

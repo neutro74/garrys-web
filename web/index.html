@@ -9,13 +9,51 @@
 <link rel="apple-touch-icon" href="/web/brand/icon-180.png">
 <link rel="stylesheet" href="/web/launcher.css">
 <style>
-  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  html, body { margin: 0; height: 100%; background: #0b1521; overflow: hidden; }
   canvas#screen { display: block; width: 100vw; height: 100vh; object-fit: contain; background: #000; }
-  /* The launcher shows progress and errors; this plain line is only the fallback if its script fails to load. */
-  #status { position: fixed; left: 12px; bottom: 12px; font: 13px system-ui, sans-serif; color: #ddd; text-shadow: 0 1px 3px #000; pointer-events: none; }
-  body.launcher-ready #status { visibility: hidden; }
+  /* The splash: shown from the first byte (everything it needs is in this file), until the launcher or the game takes
+     over. #status inside it is the line the launcher and the game write their progress and errors to. */
+  #splash { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; overflow: hidden; color: #e8eef6;
+    font: 14px Tahoma, Verdana, "Segoe UI", system-ui, sans-serif; transition: opacity .45s ease, visibility .45s;
+    background: radial-gradient(ellipse at 50% 38%, #1d5a95 0%, #123a63 32%, #0b1e33 70%, #08121d 100%); }
+  #splash::before { content: ""; position: absolute; inset: -64px; opacity: .13; pointer-events: none;
+    background-image: linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px); background-size: 64px 64px;
+    mask-image: radial-gradient(ellipse at 50% 45%, #000 15%, transparent 70%); animation: gw-grid 18s linear infinite; }
+  @keyframes gw-grid { to { transform: translate(64px, 64px); } }
+  body.launcher-ready #splash, #splash:has(#status:empty) { opacity: 0; visibility: hidden; pointer-events: none; }
+  .gw-splash { position: relative; display: flex; flex-direction: column; align-items: center; gap: 22px; width: min(440px, calc(100vw - 32px)); }
+  .gw-splash img { width: min(288px, 70vw); height: auto; filter: drop-shadow(0 8px 24px rgba(0, 0, 0, .45)); animation: gw-float 4s ease-in-out infinite; }
+  @keyframes gw-float { 50% { transform: translateY(-6px); } }
+  .gw-bar { position: relative; width: 100%; height: 10px; overflow: hidden; border-radius: 5px; background: rgba(255, 255, 255, .12); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .5), 0 1px 0 rgba(255, 255, 255, .08); }
+  .gw-bar::after { content: ""; position: absolute; top: 0; bottom: 0; left: -40%; width: 40%; border-radius: 5px;
+    background: linear-gradient(90deg, #1194f0, #63c1ff); box-shadow: 0 0 12px rgba(80, 180, 255, .7); animation: gw-slide 1.4s cubic-bezier(.45, 0, .55, 1) infinite; }
+  @keyframes gw-slide { to { left: 100%; } }
+  #status { min-height: 1.4em; max-width: 100%; text-align: center; font-weight: bold; text-shadow: 0 1px 2px #000; overflow-wrap: anywhere; }
+  .gw-tip { min-height: 2.6em; max-width: 100%; text-align: center; color: #9fb6cc; font-size: 12px; line-height: 1.35; transition: opacity .4s; }
+  .gw-tip b { color: #cfe4f7; }
+  @media (prefers-reduced-motion: reduce) { #splash::before, .gw-splash img { animation: none; } .gw-bar::after { animation-duration: 4s; } }
 </style>
 <canvas id="screen" width="1280" height="720"></canvas>
-<div id="status">Starting...</div>
+<div id="splash" role="status" aria-live="polite">
+  <div class="gw-splash">
+    <img src="/web/brand/logo@2x.png" alt="Garry's Web" width="288" height="128">
+    <div class="gw-bar" aria-hidden="true"></div>
+    <div id="status">Starting...</div>
+    <div class="gw-tip" data-tip></div>
+  </div>
+</div>
 <div id="launcher" hidden></div>
+<script>
+  // Tips under the bar while it loads.
+  (() => {
+    const tips = ['Press <b>Shift+Tab</b> in game to open chat without leaving it.', 'Signed in, your saves, dupes and settings follow you to any browser.',
+      'Share a save as a link from <b>Saves</b>; anyone can play it straight away.', 'The first start downloads the game; later starts are much faster.',
+      'In a voice channel, <b>Ctrl+Shift+M</b> mutes you and <b>Ctrl+Shift+D</b> deafens you.', 'Type <b>@</b> in chat to mention someone.'];
+    const el = document.querySelector('[data-tip]');
+    let i = Math.floor(Math.random() * tips.length);
+    const next = () => { el.style.opacity = 0; setTimeout(() => { el.innerHTML = tips[i++ % tips.length]; el.style.opacity = 1; }, 400); };
+    el.innerHTML = tips[i++ % tips.length];
+    const t = setInterval(() => { if (document.body.classList.contains('launcher-ready')) clearInterval(t); else next(); }, 5000);
+  })();
+</script>
 <script type="module" src="/web/launcher.js"></script>

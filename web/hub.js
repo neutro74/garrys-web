@@ -123,3 +123,25 @@ export async function hubStatus(url = hubUrl()) {
     return r.ok ? await r.json() : null;
   } catch { return null; }
 }
+
+// Before anything talks to the hub: one request to it, so that a browser which must ask the player first (Chrome's "access
+// devices on your local network" prompt: some networks' DNS gives the hub a local address) asks now, while the page is
+// still loading, rather than chat and profiles failing later. `onWait` runs if the answer takes a moment (a prompt is up).
+// Resolves true once the hub answered; false if it cannot be reached (the page carries on either way, after `max` ms).
+export async function requestHubAccess({ url = hubUrl(), onWait = () => {}, max = 12000 } = {}) {
+  if (!url) return false;
+  const health = url.replace(/^ws/, 'http').replace(/\/?$/, '/health');
+  const waiting = setTimeout(onWait, 1500);
+  const attempt = async () => {
+    // A plain request first; if the browser refuses it outright, again with the hint that the server is on a local
+    // network, which is what makes Chrome show its prompt where a plain request is just refused.
+    for (const hint of [null, 'local', 'private']) {
+      const t0 = performance.now();
+      try { const r = await fetch(health, { cache: 'no-store', ...(hint ? { targetAddressSpace: hint } : {}) }); return r.ok; }
+      catch { if (performance.now() - t0 > 3000) return false; }   // a slow failure is the network, not the browser
+    }
+    return false;
+  };
+  try { return await Promise.race([attempt(), new Promise((r) => setTimeout(() => r(false), max))]); } finally { clearTimeout(waiting); }
+}
+

@@ -47,7 +47,7 @@ export function packageCdn({input,out,have,patch}){
  // Tab icons go in the page as data: URLs. Browsers fetch them outside the service worker, and the CDN answers image
  // paths with a redirect that has no target, so a linked icon never loads.
  const icon=(f,type)=>`data:${type};base64,${fs.readFileSync(path.join(repo,'web/brand',f)).toString('base64')}`;
- const pageIcons=page.replace('href="brand/favicon.ico"',`href="${icon('favicon.ico','image/x-icon')}"`).replace('href="brand/icon-192.png"',`href="${icon('icon-192.png','image/png')}"`).replace('href="brand/icon-180.png"',`href="${icon('icon-180.png','image/png')}"`);
+ const pageIcons=page.replace('href="brand/favicon.ico"',`href="${icon('favicon.ico','image/x-icon')}"`).replace('href="brand/icon-192.png"',`href="${icon('icon-192.png','image/png')}"`).replace('href="brand/icon-180.png"',`href="${icon('icon-180.png','image/png')}"`).replace('src="brand/logo@2x.png"',`src="${icon('logo@2x.png','image/png')}"`);   // the splash logo, before the worker runs
  fs.writeFileSync(path.join(out,'web/index.html'),pageIcons);
 
  fs.writeFileSync(path.join(out,'index.html'),'<!doctype html><meta charset="utf-8"><title>Garry\'s Web</title><link rel="icon" href="'+icon('favicon.ico','image/x-icon')+'"><meta http-equiv="refresh" content="0;url=web/index.html"><a href="web/index.html">Garry\'s Web</a>');

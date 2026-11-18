@@ -83,13 +83,14 @@ export function createWorkshop({ key = process.env.STEAM_KEY ?? '', cacheDir = p
     p.on('error', reject);
   });
   const isGma = (f) => { const fd = fs.openSync(f, 'r'), b = Buffer.alloc(4); fs.readSync(fd, b, 0, 4, 0); fs.closeSync(fd); return b.toString('latin1') === 'GMAD'; };
+  // The item's file, whatever it is called: .gma, or on old items "..._legacy.bin" or "uploads/addons/<hash>.gm" (both
+  // LZMA-compressed). A known extension wins; otherwise the largest file. Its contents are checked after.
   function findGma(dir) {
-    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (e.name === '.DepotDownloader') continue;
-      const p = path.join(dir, e.name);
-      if (e.isDirectory()) { const f = findGma(p); if (f) return f; } else if (/\.(gma|bin)$/i.test(e.name)) return p;
-    }
-    return null;
+    const all = [];
+    const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { if (e.name === '.DepotDownloader') continue; const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else all.push({ p, size: fs.statSync(p).size, known: /\.(gma|bin|gm)$/i.test(e.name) }); } };
+    walk(dir);
+    all.sort((a, b) => b.known - a.known || b.size - a.size);
+    return all[0]?.p ?? null;
   }
   // Old items arrive LZMA-compressed; their streams can end with a bad marker after complete data, so a non-zero exit
   // from xz is accepted when the output is a GMA.

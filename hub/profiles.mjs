@@ -16,7 +16,7 @@ export const STATUSES = ['online', 'idle', 'dnd', 'invisible'];
 const clean = (s, max) => String(s ?? '').replace(/[\u0000-\u0008\u000b-\u001f\u007f​-‏‪-‮]/g, '').trim().slice(0, max);
 const LIMITS = { avatar: 512 * 1024, banner: 1536 * 1024 };
 
-export function createProfiles({ accounts, dir = path.join(process.env.WS_CACHE ?? './ws-cache', 'profiles'), onChange = () => {} } = {}) {
+export function createProfiles({ accounts, dir = path.join(process.env.WS_CACHE ?? './ws-cache', 'profiles'), onChange = () => {}, check = () => {} } = {}) {
   fs.mkdirSync(dir, { recursive: true });
   const images = blobStore(path.join(dir, 'img')), uploads = limiter(20, 600e3);
   const file = (u) => path.join(dir, u + '.json');
@@ -51,6 +51,8 @@ export function createProfiles({ accounts, dir = path.join(process.env.WS_CACHE 
     }
     if ('links' in f) p.links = (Array.isArray(f.links) ? f.links : []).slice(0, 4).map((l) => clean(l, 200)).filter((l) => /^https:\/\/[^\s<>"]+$/.test(l));
     if ('favorite' in f) p.favorite = clean(f.favorite, 48);
+    // Automod reads the text people see on the card (it throws with the reason).
+    for (const t of [('display' in f) && p.display, ('bio' in f) && p.bio, ('pronouns' in f) && p.pronouns, ('custom' in f) && p.custom?.text, ('favorite' in f) && p.favorite]) if (t) try { check(u, t); } catch (e) { throw fail(400, e.message); }
     p.since ??= Date.now(); p.updated = Date.now();
     write(u, p); onChange(u);
     return view(u);

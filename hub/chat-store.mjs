@@ -9,6 +9,7 @@ const USER = /^[a-z0-9_]{3,20}$/, ROOM = /^[a-z0-9-]{1,40}$/;
 export function createChatStore({ dir = path.join(process.env.WS_CACHE ?? './ws-cache', 'chat') } = {}) {
   fs.mkdirSync(path.join(dir, 'rooms'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'dm'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'pings'), { recursive: true });
   const roomFile = (room) => { if (!ROOM.test(room)) throw Error('Bad room.'); return path.join(dir, 'rooms', room + '.jsonl'); };
   const pair = (a, b) => [a, b].sort();
   const dmFile = (a, b) => { if (!USER.test(a) || !USER.test(b)) throw Error('Bad username.'); return path.join(dir, 'dm', pair(a, b).join('~') + '.jsonl'); };
@@ -79,6 +80,18 @@ export function createChatStore({ dir = path.join(process.env.WS_CACHE ?? './ws-
     markDm(a, b, mark) { append(dmFile(a, b), { ...mark, at: Date.now() }); },
     saveDm(a, b, msg) { append(dmFile(a, b), msg); },
     dm(a, b, n = 100, before) { return page(dmFile(a, b), n, before); },
+    // Pings: someone @mentioned a player or answered them, kept so they still show after the player was away. @everyone
+    // and @here from admins go to one shared list (every account reads it). `seen` is the time the player last looked.
+    savePing(user, p) { if (USER.test(user)) append(path.join(dir, 'pings', user + '.jsonl'), p); },
+    saveEveryone(p) { append(path.join(dir, 'pings', 'everyone.all.jsonl'), p); },
+    pings(user, n = 50) {
+      if (!USER.test(user)) return [];
+      const out = [], take = (f, max) => backwards(path.join(dir, 'pings', f), (m) => { out.push(m); return out.length >= max; });
+      take(user + '.jsonl', n); const mine = out.length; take('everyone.all.jsonl', mine + 20);
+      return out.sort((a, b) => b.at - a.at).slice(0, n);
+    },
+    pingsSeen(user) { try { return JSON.parse(fs.readFileSync(path.join(dir, 'pings', user + '.seen'), 'utf8')).at ?? 0; } catch { return 0; } },
+    setPingsSeen(user, at) { if (USER.test(user)) fs.writeFileSync(path.join(dir, 'pings', user + '.seen'), JSON.stringify({ at: Math.min(Date.now(), +at || Date.now()) })); },
     // A player's conversations, newest first, each with its last message.
     conversations(user) {
       if (!USER.test(user)) return [];

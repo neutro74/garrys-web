@@ -21,6 +21,7 @@ import { createShares } from './shares.mjs';
 import { createSocial } from './social.mjs';
 import { createEmotes } from './emotes.mjs';
 import { createVoice } from './voice.mjs';
+import { createAutomod } from './automod.mjs';
 import { json, fail, bytes, imageType, blobStore, limiter } from './http-util.mjs';
 import path from 'node:path';
 
@@ -38,7 +39,7 @@ const CHANNELS = [
 ];
 const ROOMS = CHANNELS.map((c) => c.id);
 const MUTED = new Set(['say', 'dm', 'nick', 'host', 'edit', 'react', 'typing']);
-const LIMITED = new Set(['say', 'dm', 'nick', 'hello', 'host', 'room-history', 'dm-history', 'edit', 'delete', 'react', 'friend-add', 'profile-of', 'vc-join', 'vc-edit', 'vc-allow', 'vc-kick']);
+const LIMITED = new Set(['find-users', 'say', 'dm', 'nick', 'hello', 'host', 'room-history', 'dm-history', 'edit', 'delete', 'react', 'friend-add', 'profile-of', 'vc-join', 'vc-edit', 'vc-allow', 'vc-kick']);
 const EMOJI = /^(?:\p{Extended_Pictographic}|\p{Emoji_Presentation}|[\u{1F1E6}-\u{1F1FF}]{2}|[#*0-9]\uFE0F?\u20E3)(?:[\uFE0F\u200D\u{1F3FB}-\u{1F3FF}]|\p{Extended_Pictographic}|\p{Emoji_Presentation})*$/u;
 const IMG = /^[a-f0-9]{64}\.(png|jpg|webp|gif)$/;
 const LIMITS = { clients: 500, perIp: 6, frame: 64 * 1024, text: 400, name: 24, history: 60, lobbies: 100, burst: 6, refillMs: 1500 };
@@ -206,15 +207,33 @@ function attachments(list) {
   return out.length ? out : undefined;
 }
 // A reply carries a short copy of the message it answers, so it shows even when that message is far back in the history.
-function replyTo(found) { return found ? { id: found.id, name: found.from?.name ?? found.name ?? found.from, text: String(found.text ?? '').slice(0, 120) } : undefined; }
-// Mentions (@account) reach that player even when they are not looking at the channel.
-function mention(c, text, where) {
-  const seen = new Set();
-  for (const [, u] of text.matchAll(/@([a-z0-9_]{3,20})\b/gi)) {
-    const who = u.toLowerCase();
-    if (seen.has(who) || who === c.account || seen.size >= 5) continue;
-    seen.add(who);
-    if (accounts.exists(who) && !social.blocks(who, c.account ?? '')) toAccount(who, { t: 'mention', ...where, from: user(c), text: text.slice(0, 200), at: Date.now() });
+// `account` is who wrote it; `ping` (on unless the writer turned it off) tells them about the answer.
+function replyTo(found, ping = true) {
+  if (!found) return undefined;
+  const acct = typeof found.from === 'string' ? found.from : found.from?.account;
+  return { id: found.id, name: found.from?.name ?? found.name ?? found.from, text: String(found.text ?? '').slice(0, 120), ...(acct ? { account: acct, ping: ping !== false } : {}) };
+}
+// Pings: an @account in a channel message, an answer to someone's message, and (admins only) @everyone or @here. Each one
+// goes to that player's open pages straight away and is kept (chat-store pings), so it is still there after they were away.
+// Blocked players never ping. At most 20 people are pinged by name in one message (automod usually stops it at fewer).
+function pings(c, msg) {
+  const who = new Map();
+  for (const [, u] of String(msg.text).matchAll(/@([a-z0-9_]{3,20})\b/gi)) {
+    const a = u.toLowerCase();
+    if (a === 'everyone' || a === 'here' || a === c.account || who.has(a) || who.size >= 20 || !accounts.exists(a)) continue;
+    who.set(a, 'mention');
+  }
+  if (msg.reply?.ping && msg.reply.account && msg.reply.account !== c.account && !who.has(msg.reply.account)) who.set(msg.reply.account, 'reply');
+  const base = { id: msg.id, room: msg.room, from: user(c), text: String(msg.text).slice(0, 200), at: msg.at };
+  for (const [a, kind] of who) {
+    if (social.blocks(a, c.account ?? '')) continue;
+    const p = { ...base, kind }; keep(() => chat.savePing(a, p)); toAccount(a, { t: 'ping', ...p });
+  }
+  if (msg.everyone) {
+    const p = { ...base, kind: msg.everyone };
+    if (msg.everyone === 'everyone') keep(() => chat.saveEveryone(p));
+    const to = msg.everyone === 'here' ? [...(rooms.get(msg.room)?.members ?? [])] : [...clients];
+    for (const x of to) if (x.account && x.account !== c.account && !who.has(x.account)) x.send({ t: 'ping', ...p });
   }
 }
 // Where a message lives: a channel ({room}) or a private chat ({with}); `own` checks who may change it.
@@ -229,6 +248,13 @@ function locate(c, m) {
   return { find: (id) => chat.findDm(c.account, other, id), mark: (x) => chat.markDm(c.account, other, x), send: (obj) => { toAccount(c.account, { ...obj, with: other }); toAccount(other, { ...obj, with: c.account }); }, where: { with: other } };
 }
 const isAdmin = (c) => !!c.account && admin.isAdmin(c.account);
+// Automod (hub/automod.mjs) said no: only the writer hears why, with what they wrote so the page can give it back.
+function blockedByAutomod(c, text, opts, m) {
+  const hit = automod.check(c, text, opts);
+  if (!hit) return false;
+  c.send({ t: 'automod', rule: hit.rule, reason: hit.reason, text, ...(m.room !== undefined ? { room: m.room } : {}), ...(m.to ? { with: m.to } : m.with ? { with: m.with } : {}) });
+  return true;
+}
 const ownMsg = (c, msg) => msg && (msg.from?.key ? msg.from.key === ownerKey(c) : msg.from === c.account);
 
 function friendsView(u) {
@@ -238,8 +264,8 @@ function friendsView(u) {
 
 function handle(c, m) {
   if (m.t === 'hello') {
-    const name = clean(m.name, LIMITS.name);
-    if (name.length < 2) throw Error('Pick a name of at least 2 characters.');
+    let name = clean(m.name, LIMITS.name);
+    if (name.length < 2 || automod.test(name, 'name')) name = 'Player' + crypto.randomBytes(2).toString('hex');   // a name automod refuses is replaced
     c.name = name; c.device = /^\d{1,12}$/.test(String(m.device ?? '')) ? String(m.device) : null;
     c.activity = cleanActivity(m.activity);
     admin.seen(c);
@@ -254,6 +280,7 @@ function handle(c, m) {
     case 'join': {
       const r = rooms.get(m.room);
       if (!r) throw Error('No such room.');
+      if (!c.account) return c.send({ t: 'room', room: m.room, users: [], history: [], locked: true });   // chat is for accounts only
       if (!r.members.has(c)) { r.members.add(c); c.rooms.add(m.room); toRoom(m.room, { t: 'joined', room: m.room, user: user(c) }, c); }
       let history = r.history;
       try { history = chat.room(m.room, 100).messages; } catch { /* the in-memory copy */ }
@@ -262,21 +289,24 @@ function handle(c, m) {
     case 'leave': return leaveRoom(c, m.room);
     case 'say': {
       const r = rooms.get(m.room), text = clean(m.text, LIMITS.text), attach = attachments(m.attach), sticker = emotes.sticker(m.sticker);
+      if (!c.account) throw Error('Sign in to a Garry\'s Web account to chat.');
       if (!r?.members.has(c)) throw Error('Join the room first.');
       if (channel(m.room)?.readonly && !isAdmin(c)) throw Error('Only admins post in this channel.');
-      if ((attach || sticker) && !c.account) throw Error('Sign in to a Garry\'s Web account to post pictures and stickers.');
       if (!text && !attach && !sticker) return;
-      const reply = m.reply ? replyTo(chat.findRoom(m.room, String(m.reply))) : undefined;
-      const msg = { t: 'msg', id: crypto.randomBytes(6).toString('base64url'), room: m.room, from: user(c), text, at: Date.now(), ...(reply ? { reply } : {}), ...(attach ? { attach } : {}), ...(sticker ? { sticker } : {}) };
+      if (blockedByAutomod(c, text, { where: 'channel', room: m.room }, m)) return;
+      const reply = m.reply ? replyTo(chat.findRoom(m.room, String(m.reply)), m.replyPing) : undefined;
+      const everyone = isAdmin(c) ? /(?<![\w`])@everyone\b/.test(text) ? 'everyone' : /(?<![\w`])@here\b/.test(text) ? 'here' : null : null;
+      const msg = { t: 'msg', id: crypto.randomBytes(6).toString('base64url'), room: m.room, from: user(c), text, at: Date.now(), ...(reply ? { reply } : {}), ...(attach ? { attach } : {}), ...(sticker ? { sticker } : {}), ...(everyone ? { everyone } : {}) };
       r.history.push(msg); if (r.history.length > LIMITS.history) r.history.shift();
       keep(() => chat.saveRoom(m.room, msg));
-      mention(c, text, { room: m.room, id: msg.id });
-      return toRoom(m.room, msg);
+      toRoom(m.room, msg);
+      return pings(c, msg);
     }
     case 'edit': {
       const at = locate(c, m), id = String(m.id ?? ''), text = clean(m.text, LIMITS.text), msg = at.find(id);
       if (!ownMsg(c, msg)) throw Error('You can only edit your own messages.');
       if (!text) throw Error('A message cannot be empty; delete it instead.');
+      if (blockedByAutomod(c, text, { where: 'edit', room: m.room ?? null }, m)) return;
       at.mark({ edit: id, text }); at.send({ t: 'edited', id, text, edited: Date.now() });
       if (m.room !== undefined) { const h = rooms.get(m.room).history.find((x) => x.id === id); if (h) { h.text = text; h.edited = Date.now(); } }
       return;
@@ -291,6 +321,7 @@ function handle(c, m) {
     }
     case 'react': {
       const at = locate(c, m), id = String(m.id ?? ''), emoji = String(m.emoji ?? '');
+      if (!c.account) throw Error('Sign in to a Garry\'s Web account to chat.');
       if (!EMOJI.test(emoji) || emoji.length > 16) throw Error('That is not an emoji.');
       if (!at.find(id)) throw Error('That message is gone.');
       const by = c.account ?? c.name, on = m.on !== false;
@@ -298,6 +329,7 @@ function handle(c, m) {
       return;
     }
     case 'typing': {
+      if (!c.account) return;
       if (m.room !== undefined) { if (rooms.get(m.room)?.members.has(c)) toRoom(m.room, { t: 'typing', room: m.room, user: user(c) }, c); return; }
       if (!c.account) return;
       const other = String(m.with ?? '').toLowerCase();
@@ -307,6 +339,7 @@ function handle(c, m) {
     case 'nick': {
       const name = clean(m.name, LIMITS.name);
       if (name.length < 2) throw Error('Pick a name of at least 2 characters.');
+      automod.assert(c, name, 'name');
       const old = c.name; c.name = name;
       for (const r of c.rooms) toRoom(r, { t: 'nick', room: r, user: user(c), old });
       c.send({ t: 'welcome', id: c.id, name, key: ownerKey(c), rooms: roomList(), online: clients.size, presence: onlineAccounts() });
@@ -325,8 +358,11 @@ function handle(c, m) {
       admin.seen(c);
       if (refuseBanned(c)) return;
       c.send({ t: 'authed', user: u ?? null, admin: !!u && admin.isAdmin(u), ...(u ? { status: profiles.status(u) } : {}) });
-      if (before !== c.account) { presenceChanged(before); presenceChanged(c.account); }
-      if (u) c.send(friendsView(u));
+      if (before !== c.account) {
+        presenceChanged(before); presenceChanged(c.account);
+        if (!u) for (const r of [...c.rooms]) leaveRoom(c, r);   // signed out: chat is for accounts only
+      }
+      if (u) { c.send(friendsView(u)); c.send({ t: 'pings', list: chat.pings(u, 50), seen: chat.pingsSeen(u) }); }
       return;
     }
     case 'dm': {
@@ -337,6 +373,7 @@ function handle(c, m) {
       if (social.blocks(to, c.account)) throw Error(`${to} is not accepting your messages.`);
       if (social.blocks(c.account, to)) throw Error(`You blocked ${to}. Unblock them to send messages.`);
       if (!text && !attach && !sticker) return;
+      if (blockedByAutomod(c, text, { where: 'dm' }, m)) return;
       const reply = m.reply ? replyTo(chat.findDm(c.account, to, String(m.reply))) : undefined;
       const msg = { t: 'dm', id: crypto.randomBytes(6).toString('base64url'), from: c.account, name: c.name, to, text, at: Date.now(), ...(reply ? { reply } : {}), ...(attach ? { attach } : {}), ...(sticker ? { sticker } : {}) };
       chat.saveDm(c.account, to, msg);
@@ -392,6 +429,14 @@ function handle(c, m) {
       return to.send({ t: 'signal', from: user(c), data: m.data ?? null });
     }
     case 'ping': return c.send({ t: 'pong' });
+    // The player has looked at their pings up to this time.
+    case 'pings-seen': if (c.account) { chat.setPingsSeen(c.account, m.at); toAccount(c.account, { t: 'pings-seen', at: chat.pingsSeen(c.account) }); } return;
+    // Accounts whose name starts with this (for @ suggestions while typing).
+    case 'find-users': {
+      if (!c.account) return;
+      const q = String(m.q ?? '').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20);
+      return c.send({ t: 'found-users', q, users: q ? accounts.find(q, 8) : [] });
+    }
     default:
       if (voice.handle(c, m)) return;
       throw Error(`Unknown request ${m.t}`);
@@ -411,7 +456,7 @@ process.on('uncaughtException', (err) => {
 });
 const workshop = createWorkshop(), versions = createVersions(), accounts = createAccounts(), servers = createServers({ log: console.log }), steamLogin = createSteamLogin({ log: console.log });
 // Profiles, friends, cloud files and shared saves (Garry's Web accounts). A profile change is announced so open chats redraw it.
-const profiles = createProfiles({ accounts, onChange: (u) => { for (const c of clients) if (c.name) c.send({ t: 'profile', user: u }); lastPresence.delete(u); presenceChanged(u); } });
+const profiles = createProfiles({ accounts, check: (u, text) => automod.assert({ account: u }, text, 'profile'), onChange: (u) => { for (const c of clients) if (c.name) c.send({ t: 'profile', user: u }); lastPresence.delete(u); presenceChanged(u); } });
 const social = createSocial(), cloud = createCloud({ accounts });
 // Pictures posted in chat: signed-in players only, resized by the page first; kept once per content hash.
 const chatImages = blobStore(path.join(process.env.WS_CACHE ?? './ws-cache', 'chat', 'img')), chatUploads = limiter(30, 600e3);
@@ -436,7 +481,7 @@ async function chatUpload(req, res, h, ip) {
   return true;
 }
 // ---- Admin (hub/admin.mjs) --------------------------------------------------------------------------------------------
-const admin = createAdmin({ accounts, hub: {
+const admin = createAdmin({ accounts, automod: () => automod, hub: {
   counts: () => ({ clients: clients.size, relays: relays.size, pairs: pairs.size, lobbyCount: lobbies.size }),
   clients: () => [...clients].filter((c) => c.name),
   lobbies: () => [...lobbies].map(([id, l]) => ({ ...lobbyView(id, l), hostIp: l.host.ip, hostDevice: l.host.device ?? null, hostAccount: l.host.account ?? null })),
@@ -454,6 +499,9 @@ const admin = createAdmin({ accounts, hub: {
   announce(text) { for (const c of clients) if (c.name) c.send({ t: 'notice', text, at: Date.now() }); return clients.size; },
   closeLobby(id) { const l = lobbies.get(id); if (!l) throw Error('That game is already closed.'); l.host.send({ t: 'lobby-closed', id }); dropLobby(id); },
 } });
+// Automod: admins are not checked; repeat offenders are muted through the admin panel's mutes (so admins see and lift them).
+const automod = createAutomod({ isAdmin: (c) => !!c.account && admin.isAdmin(c.account), accountAge: (u) => Date.now() - (accounts.created(u) || 0),
+  mute: (target, minutes, reason) => admin.autoMute(target, minutes, reason) });
 const shares = createShares({ accounts, isAdmin: (u) => admin.isAdmin(u) });
 // Custom emojis and stickers (admins add them) and GIF links copied into the chat picture store (hub/emotes.mjs).
 const emotes = createEmotes({ accounts, isAdmin: (u) => admin.isAdmin(u), chatImages, muted: (who) => admin.muted(who), log: console.log,

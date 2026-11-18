@@ -12,6 +12,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 const USER = /^[a-z0-9_]{3,20}$/;
+// Sign-ups and wrong passwords allowed per address in 15 minutes (ACCOUNT_ATTEMPTS; the tests raise it).
+const ATTEMPTS = +(process.env.ACCOUNT_ATTEMPTS ?? 10) || 10;
 export function createAccounts({ dir = path.join(process.env.WS_CACHE ?? './ws-cache', 'accounts') } = {}) {
   fs.mkdirSync(dir, { recursive: true });
   const fails = new Map();   // ip -> [timestamps] of failed logins / registrations
@@ -20,7 +22,7 @@ export function createAccounts({ dir = path.join(process.env.WS_CACHE ?? './ws-c
   const write = (a) => { const tmp = file(a.user) + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(a)); fs.renameSync(tmp, file(a.user)); };
   const sha = (t) => crypto.createHash('sha256').update(t).digest('hex');
   const hashPass = (pass, salt) => crypto.scryptSync(pass, salt, 32, { N: 16384, r: 8, p: 1 }).toString('hex');
-  const throttled = (ip) => (fails.get(ip) ?? []).filter((t) => Date.now() - t < 900e3).length >= 10;
+  const throttled = (ip) => (fails.get(ip) ?? []).filter((t) => Date.now() - t < 900e3).length >= ATTEMPTS;
   const failed = (ip) => fails.set(ip, [...(fails.get(ip) ?? []).filter((t) => Date.now() - t < 900e3), Date.now()]);
   const newToken = (a) => { const t = crypto.randomBytes(32).toString('base64url'); a.tokens = [...(a.tokens ?? []).slice(-19), { h: sha(t), at: Date.now() }]; return t; };
   const auth = (req) => {
@@ -92,6 +94,9 @@ export function createAccounts({ dir = path.join(process.env.WS_CACHE ?? './ws-c
   };
   // For the other HTTP services (profiles, cloud files, shares): the signed-in user of a request, or null.
   handle.userOf = (req) => auth(req)?.a.user ?? null;
+  handle.created = (user) => (USER.test(String(user ?? '')) ? read(String(user))?.created ?? 0 : 0);
+  // Usernames starting with a prefix (the @ suggestions in chat).
+  handle.find = (prefix, n = 8) => { const out = []; for (const f of fs.readdirSync(dir)) { if (f.endsWith('.json') && f.startsWith(prefix)) out.push(f.slice(0, -5)); if (out.length >= n * 4) break; } return out.sort((a, b) => a.length - b.length || a.localeCompare(b)).slice(0, n); };
   handle.exists = (user) => USER.test(String(user ?? '')) && fs.existsSync(file(String(user)));
   // For the admin panel (hub/admin.mjs): every account, and signing one out everywhere.
   handle.list = () => fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => read(f.slice(0, -5))).filter(Boolean)

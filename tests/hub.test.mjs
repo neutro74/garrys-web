@@ -10,7 +10,7 @@ const PORT = 18000 + Math.floor(Math.random() * 1000);
 let proc;
 test.before(async () => {
   const cache = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-test-'));   // accounts, chat and files of this run only
-  proc = spawn(process.execPath, ['hub/hub.mjs'], { env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', WS_CACHE: cache } });
+  proc = spawn(process.execPath, ['hub/hub.mjs'], { env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', WS_CACHE: cache, ACCOUNT_ATTEMPTS: '200' } });
   proc.on('exit', () => fs.rmSync(cache, { recursive: true, force: true }));
   await new Promise((r) => proc.stdout.once('data', r));
 });
@@ -31,11 +31,9 @@ test('chat, lobbies and signaling', async () => {
   a.send({ t: 'hello', name: '  Alice\u0000  ' });
   const wa = await a.next('welcome'); assert.equal(wa.name, 'Alice');
   b.send({ t: 'hello', name: 'Bob' }); const wb = await b.next('welcome');
-  a.send({ t: 'join', room: 'general' }); await a.next('room');
-  b.send({ t: 'join', room: 'general' }); const rb = await b.next('room'); assert.equal(rb.users.length, 2);
-  assert.equal((await a.next('joined')).user.name, 'Bob');
-  b.send({ t: 'say', room: 'general', text: 'hi <b>there</b>' });
-  assert.equal((await a.next('msg')).text, 'hi <b>there</b>');
+  // Chat is for accounts: a guest's join gets an empty, locked room and saying anything is refused.
+  a.send({ t: 'join', room: 'general' }); const ra = await a.next('room'); assert.equal(ra.locked, true); assert.deepEqual(ra.history, []);
+  a.send({ t: 'say', room: 'general', text: 'hi' }); assert.match((await a.next('error')).error, /account/);
   b.send({ t: 'watch-lobbies' }); assert.deepEqual((await b.next('lobbies')).lobbies, []);
   a.send({ t: 'host', lobby: { name: 'Sandbox', edition: 'extended', map: 'gm_construct', max: 4 } });
   const h = await a.next('hosting');
@@ -44,13 +42,12 @@ test('chat, lobbies and signaling', async () => {
   b.send({ t: 'signal', to: l.host, data: { kind: 'join', lobby: l.id } });
   const s = await a.next('signal'); assert.equal(s.from.id, wb.id); assert.equal(s.data.kind, 'join');
   a.ws.close();
-  assert.equal((await b.next('left')).user.name, 'Alice');
   assert.deepEqual((await b.next('lobbies')).lobbies, []);
   b.ws.close();
 });
 
 test('rate limit', async () => {
-  const c = client(); await c.open; c.send({ t: 'hello', name: 'Spam' }); await c.next('welcome');
+  const { c } = await account('spam');
   c.send({ t: 'join', room: 'general' }); await c.next('room');
   for (let i = 0; i < 12; i++) c.send({ t: 'say', room: 'general', text: 'x' + i });
   assert.match((await c.next('error')).error, /Slow down/);
@@ -97,7 +94,7 @@ async function account(prefix) {
   const { token } = await (await fetch(base + '/acct/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user, pass: 'secret1' }) })).json();
   const c = client(); await c.open;
   c.send({ t: 'hello', name: prefix, device: String(Math.floor(Math.random() * 1e9)) }); const welcome = await c.next('welcome');
-  c.send({ t: 'auth', user, token }); await c.next('authed'); await c.next('friends');
+  c.send({ t: 'auth', user, token }); await c.next('authed'); await c.next('friends'); await c.next('pings');
   return { user, token, c, welcome, auth: { Authorization: `Bearer ${token}`, 'X-User': user } };
 }
 
@@ -107,8 +104,8 @@ test('chat: replies, edits, reactions, deletions and mentions', async () => {
   a.c.send({ t: 'say', room: 'general', text: 'first' }); const first = await b.c.next('msg'); await a.c.next('msg');
   b.c.send({ t: 'say', room: 'general', text: `yes @${a.user}`, reply: first.id });
   const reply = await a.c.next('msg'); await b.c.next('msg');
-  assert.equal(reply.reply.id, first.id); assert.equal(reply.reply.text, 'first');
-  assert.equal((await a.c.next('mention')).from.account, b.user);
+  assert.equal(reply.reply.id, first.id); assert.equal(reply.reply.text, 'first'); assert.equal(reply.reply.account, a.user);
+  const ping = await a.c.next('ping'); assert.equal(ping.from.account, b.user); assert.equal(ping.kind, 'mention');
   b.c.send({ t: 'edit', room: 'general', id: first.id, text: 'hacked' });
   assert.match((await b.c.next('error')).error, /own/);
   a.c.send({ t: 'edit', room: 'general', id: first.id, text: 'first!' });
@@ -117,13 +114,49 @@ test('chat: replies, edits, reactions, deletions and mentions', async () => {
   const r = await a.c.next('reacted'); assert.equal(r.by, b.user); assert.equal(r.on, true); await b.c.next('reacted');
   b.c.send({ t: 'react', room: 'general', id: first.id, emoji: 'not an emoji' }); assert.match((await b.c.next('error')).error, /emoji/);
   // A fresh join sees the edit and the reaction.
-  const c = client(); await c.open; c.send({ t: 'hello', name: 'Cat' }); await c.next('welcome');
+  const { c } = await account('cat');
   c.send({ t: 'join', room: 'general' }); const hist = (await c.next('room')).history;
   const seen = hist.find((m) => m.id === first.id);
   assert.equal(seen.text, 'first!'); assert.ok(seen.edited); assert.deepEqual(seen.reactions, { '👍': [b.user] });
   a.c.send({ t: 'delete', room: 'general', id: first.id }); assert.equal((await c.next('msg-deleted')).id, first.id);
   c.send({ t: 'say', room: 'announcements', text: 'x' }); assert.match((await c.next('error')).error, /room first|admins/);
   for (const x of [a.c, b.c, c]) x.ws.close();
+});
+
+test('pings: answers, quiet answers, kept while away, @ suggestions', async () => {
+  const a = await account('pia'), b = await account('pob');
+  for (const x of [a, b]) { x.c.send({ t: 'join', room: 'general' }); await x.c.next('room'); }
+  a.c.send({ t: 'say', room: 'general', text: 'question?' }); const q = await b.c.next('msg'); await a.c.next('msg');
+  b.c.send({ t: 'say', room: 'general', text: 'quiet answer', reply: q.id, replyPing: false }); await a.c.next('msg'); await b.c.next('msg');
+  b.c.send({ t: 'say', room: 'general', text: 'loud answer', reply: q.id }); await a.c.next('msg'); await b.c.next('msg');
+  const p = await a.c.next('ping'); assert.equal(p.kind, 'reply'); assert.equal(p.text, 'loud answer');
+  // @everyone means nothing from a player who is not an admin.
+  b.c.send({ t: 'say', room: 'general', text: 'hey @everyone' }); assert.equal((await a.c.next('msg')).everyone, undefined); await b.c.next('msg');
+  // Signing in again (another browser, later) brings the kept pings.
+  a.c.send({ t: 'auth', user: a.user, token: a.token }); const kept = await a.c.next('pings');
+  assert.equal(kept.list.length, 1); assert.equal(kept.list[0].text, 'loud answer');
+  a.c.send({ t: 'pings-seen', at: Date.now() }); assert.ok((await a.c.next('pings-seen')).at > 0);
+  a.c.send({ t: 'find-users', q: b.user.slice(0, 5) }); assert.ok((await a.c.next('found-users')).users.includes(b.user));
+  for (const x of [a.c, b.c]) x.ws.close();
+});
+
+test('automod: slurs, repeats, mention spam, names; strikes mute', async () => {
+  const a = await account('amy'), b = await account('bea');
+  for (const x of [a, b]) { x.c.send({ t: 'join', room: 'general' }); await x.c.next('room'); }
+  const blocked = async (text) => { a.c.send({ t: 'say', room: 'general', text }); return a.c.next('automod'); };
+  const hit = await blocked('you are a f4gg0t'); assert.equal(hit.rule, 'words'); assert.equal(hit.text, 'you are a f4gg0t');
+  a.c.send({ t: 'say', room: 'general', text: 'Nigeria and Niger are countries; spicy raccoons' }); assert.match((await b.c.next('msg')).text, /Nigeria/); await a.c.next('msg');
+  assert.equal((await blocked('@aaa1 @bbb1 @ccc1 @ddd1 @eee1 @fff1')).rule, 'mentions');
+  // Three blocked messages in ten minutes: muted for ten.
+  const third = await blocked('THIS IS ALL CAPITAL LETTERS SHOUTING'); assert.equal(third.rule, 'caps'); assert.match(third.reason, /muted/);
+  a.c.send({ t: 'say', room: 'general', text: 'hello' }); assert.match((await a.c.next('error')).error, /muted/);
+  b.c.send({ t: 'say', room: 'general', text: 'same' }); await b.c.next('msg'); await a.c.next('msg');
+  b.c.send({ t: 'say', room: 'general', text: 'same' }); await b.c.next('msg'); await a.c.next('msg');
+  b.c.send({ t: 'say', room: 'general', text: 'same' }); assert.equal((await b.c.next('automod')).rule, 'spam');
+  b.c.send({ t: 'nick', name: 'n1gg3r' }); assert.match((await b.c.next('error')).error, /not allowed/);
+  const r = await fetch(`http://127.0.0.1:${PORT}/profile`, { method: 'PUT', headers: { ...b.auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ bio: 'k y s' }) });
+  assert.equal(r.status, 400);
+  for (const x of [a.c, b.c]) x.ws.close();
 });
 
 test('friends, presence, blocking and private messages', async () => {

@@ -55,7 +55,7 @@ for (const k of ['log', 'error', 'warn']) {
   };
 }
 
-export function createAdmin({ accounts, hub }) {
+export function createAdmin({ accounts, hub, automod = () => null }) {
   fs.mkdirSync(path.join(STATE_DIR, 'totp'), { recursive: true, mode: 0o700 });
   const bans = jsonStore('bans.json', []), mutes = jsonStore('mutes.json', []);
   const auditFile = path.join(STATE_DIR, 'audit.jsonl');
@@ -133,6 +133,7 @@ export function createAdmin({ accounts, hub }) {
       recent: recent.slice().reverse(),
       bans: live(bans.get()), mutes: live(mutes.get()),
       lobbies: hub.lobbies(),
+      automod: automod() ? { config: automod().config(), log: automod().log().slice(0, 100) } : null,
       accounts: accounts.list(),
       rooms: hub.roomNames(),
       log: logRing.slice(-200),
@@ -155,6 +156,9 @@ export function createAdmin({ accounts, hub }) {
       const e = { id: crypto.randomBytes(5).toString('hex'), ...target(b.target), reason: String(b.reason ?? '').slice(0, 200), until: minutes(b.minutes || 60), by: who, at: now(), label: String(b.label ?? '').slice(0, 40) };
       mutes.set([...live(mutes.get()), e]); return { mute: e };
     },
+    // Automod settings (hub/automod.mjs) and its tester.
+    automod(b) { return { config: automod().setConfig(b.config ?? {}) }; },
+    'automod-test'(b) { return { hit: automod().test(String(b.text ?? '').slice(0, 400), b.where === 'dm' ? 'dm' : b.where === 'name' ? 'name' : 'channel') }; },
     unmute(b) { mutes.set(live(mutes.get()).filter((e) => e.id !== b.id)); return {}; },
     kick(b) { return { kicked: hub.kickWhere((p) => p.id === String(b.id), { t: 'kicked', reason: String(b.reason ?? '').slice(0, 200) }) }; },
     delete(b) { hub.deleteMessage(String(b.room), String(b.id)); return {}; },
@@ -236,6 +240,8 @@ export function createAdmin({ accounts, hub }) {
   handle.banned = banned;
   handle.isAdmin = (u) => ADMINS.has(String(u ?? ""));
   handle.muted = muted;
+  // Automod's own mutes: listed with the rest (by "automod") and lifted the same way.
+  handle.autoMute = (t, mins, reason) => { const r = actions.mute({ target: t, minutes: mins, reason, label: 'automod' }, 'automod'); audit('automod', 'mute', { target: t, minutes: mins, reason }); return r; };
   handle.banInfo = banInfo;
   handle.seen = seen;
   return handle;

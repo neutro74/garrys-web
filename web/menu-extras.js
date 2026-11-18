@@ -38,9 +38,36 @@ const refresh = (page) => { const s = scopeOf(page); if (s?.Switch) s.$apply(() 
 // Lua runs in the menu state; mounting makes an installed addon's content available without a restart.
 const lua = (code) => { try { window.lua?.Run(code); } catch { /* not in engine */ } };
 // An addon installed now: listed for web/live-addons.lua, which mounts it in the running game (server and client) and runs
-// its Lua, as Workshop subscriptions do. In the menu, the next map picks it up the same way.
-const liveMount = (name) => lua(`file.CreateDir("garrysweb") file.Write("garrysweb/mount.txt", (file.Read("garrysweb/mount.txt", "DATA") or "") .. "${String(name).replace(/[^\w.-]/g, '')}\\n")`);
+// its Lua, as Workshop subscriptions do. In the main menu the engine mounts it itself: the Steam layer reports installed
+// addons as Workshop subscriptions (tools/lift/host/steam.mjs), and steamworks.ApplyAddons() makes the menu take in the new
+// one, so a map is in Start New Game straight away.
+const liveMount = (name) => {
+  lua(`file.CreateDir("garrysweb") file.Write("garrysweb/mount.txt", (file.Read("garrysweb/mount.txt", "DATA") or "") .. "${String(name).replace(/[^\w.-]/g, '')}\\n")`);
+  if (!inGameNow) lua('if steamworks and steamworks.ApplyAddons then steamworks.ApplyAddons() end');
+};
 let inGameNow = false;
+// Does a .gma hold a map (maps/*.bsp)? Its header lists every file, so the first part of the file is enough to tell.
+async function gmaHasMap(file) {
+  try {
+    const b = new Uint8Array(await file.slice(0, 1 << 20).arrayBuffer()), td = new TextDecoder();
+    if (td.decode(b.subarray(0, 4)) !== 'GMAD') return false;
+    let at = 4 + 1 + 8 + 8;
+    const str = () => { const end = b.indexOf(0, at); if (end < 0) throw Error('short'); const v = td.decode(b.subarray(at, end)); at = end + 1; return v; };
+    if (b[4] > 1) while (str());           // required content list
+    str(); str(); str(); at += 4;          // name, description, author, version
+    for (;;) {
+      if (at + 4 > b.length) return false;
+      const n = b[at] | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at + 3] << 24); at += 4;
+      if (!n) return false;
+      if (/^maps\/[^/]+\.bsp$/i.test(str())) return true;
+      at += 12;                            // size (8) and CRC (4)
+    }
+  } catch { return false; }
+}
+// After installing a map: where to find it.
+function mapInstalled(status, title) {
+  status.textContent = inGameNow ? `Installed ${title}. Its map is in Start New Game (leave this game to start it).` : `Installed ${title}. Its map is in Start New Game.`;
+}
 
 // Addons page. GMod's own views need Steam, so they are replaced (in the page's own markup) by:
 //   Installed: the addons bundled with the edition (each can be switched off; applied at the next start) and the .gma files
@@ -83,7 +110,8 @@ async function addonsSidebar(page, ul) {
     try {
       const name = await host('install-addon', { file });
       liveMount(name);
-      status.textContent = inGameNow ? `Installed ${file.name}. It is ready to use now.` : `Installed ${file.name}.`;
+      if (await gmaHasMap(file)) mapInstalled(status, file.name);
+      else status.textContent = inGameNow ? `Installed ${file.name}. It is ready to use now.` : `Installed ${file.name}.`;
     } catch (e) { status.textContent = `Could not install ${file.name}: ${e.message}`; }
     load();
   });
@@ -164,7 +192,8 @@ async function addonsSidebar(page, ul) {
     try {
       const name = await host('workshop-install', { id: d.id, title: d.title });
       liveMount(name);
-      status.textContent = inGameNow ? `Installed ${d.title}. It is ready to use now.` : `Installed ${d.title}.`;
+      if (typeOfTags(d.tags ?? []) === 'map' || /^(gm|rp|ttt|cs|de|dm|zs|ph|mu|jb|surf|bhop|kz)_/i.test(d.title)) mapInstalled(status, d.title);
+      else status.textContent = inGameNow ? `Installed ${d.title}. It is ready to use now.` : `Installed ${d.title}.`;
     } catch (e) { status.textContent = `${d.title}: ${e.message}`; }
     clearInterval(tick); installing.delete(d.id);
     await load();

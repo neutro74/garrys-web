@@ -8,7 +8,7 @@
 // call and return the neutral "Steam is offline" value; set STEAM_STRICT=1 to
 // turn them into hard errors instead.
 import { STEAM_VTABLES, STEAM_SRET, STEAM_NAMES } from './steam-abi.mjs';
-import { env as ENV } from './platform.mjs';
+import { env as ENV, fs } from './platform.mjs';
 
 const STRICT = !!ENV.STEAM_STRICT;
 const DEBUG = !!ENV.STEAM_DEBUG;
@@ -62,22 +62,162 @@ function unhandled(ctx, version, index) {
 
 // Per-interface method implementations. Anything not listed falls back to the
 // logged offline value above.
-// ISteamUGC with no Workshop: nothing is subscribed or installed and every query completes empty. Addons come
-// from files the user uploads (see the addon store), so this never reports Workshop content.
+// ISteamUGC: the addons in garrysmod/addons/*.gma (this browser's library, web/storage-worker.js: what this launch mounts,
+// plus anything installed since) are reported as Workshop subscriptions that are installed, each pointing at its .gma.
+// That is how Garry's Mod itself mounts Workshop content, in the main menu too: so their maps are in Start New Game, and
+// steamworks.ApplyAddons() (the menu calls it after an install, web/menu-extras.js) mounts a new one with no restart.
+// ws-<id>.gma keeps its Workshop id; other files get a stable made-up one. Queries for details still complete empty.
 const UGC_QUERY_COMPLETED = 3401;
-function ugcMethod(st, version, index, args) {
+const ITEM_SUBSCRIBED = 1, ITEM_INSTALLED = 4;
+const ADDONS_DIR = 'c:\\gamebox\\garrysmod\\addons';
+function addonId(name) {
+  const m = /^ws-(\d{1,20})\.gma$/i.exec(name);
+  if (m) return BigInt(m[1]);
+  let h = 0xcbf29ce484222325n;
+  for (const c of name.toLowerCase()) h = BigInt.asUintN(64, (h ^ BigInt(c.charCodeAt(0))) * 0x100000001b3n);
+  return (h & 0x0000ffffffffffffn) | 0x7a00000000000000n;
+}
+// Each subscription's install folder is a virtual one, addons/.items/<id>/, that holds just its .gma (the same file, read in
+// place): Garry's Mod mounts the .gma it finds in an item's folder. (Reported as a legacy item instead, it would try to
+// unpack the file into cache/workshop/, which fails for a plain .gma.)
+function itemFolders(g) {
+  const f = g.files;
+  if (!f || f.__items) return;
+  const base = f.parts(ADDONS_DIR).map((p) => p.toLowerCase()), n = base.length;
+  const under = (parts) => parts.length > n && base.every((b, i) => parts[i].toLowerCase() === b) && parts[n].toLowerCase() === '.items';
+  const item = (id) => subscribed(g).find((a) => String(a.id) === String(id));
+  const locate = f.locate.bind(f), listDir = f.listDir.bind(f);
+  f.locate = (parts) => {
+    if (!under(parts)) return locate(parts);
+    const dir = locate(base);
+    if (parts.length === n + 1) return dir;                          // addons/.items
+    const a = item(parts[n + 1]);
+    if (!a) return null;
+    if (parts.length === n + 2) return dir;                          // addons/.items/<id>
+    if (parts.length === n + 3 && parts[n + 2].toLowerCase() === a.name.toLowerCase()) return locate([...f.parts(ADDONS_DIR), a.name]);
+    return null;
+  };
+  f.listDir = (parts) => {
+    if (!under(parts)) return listDir(parts);
+    if (parts.length === n + 1) return new Map(subscribed(g).map((a) => [String(a.id), { name: String(a.id), dir: true, size: 0, mtime: a.mtime }]));
+    const a = parts.length === n + 2 && item(parts[n + 1]);
+    return a ? new Map([[a.name.toLowerCase(), { name: a.name, dir: false, size: a.size, mtime: a.mtime }]]) : new Map();
+  };
+  f.__items = true;
+}
+function subscribed(g) {
+  const parts = g.files?.parts?.(ADDONS_DIR);
+  if (!parts || !g.files.listDir) return [];
+  itemFolders(g);
+  const list = [...g.files.listDir(parts).values()].filter((e) => !e.dir && /\.gma$/i.test(e.name) && e.size > 0)
+    .sort((a, b) => a.name.localeCompare(b.name)).map((e) => ({ ...e, id: addonId(e.name) }));
+  return list;
+}
+// The addon's title and type, from its .gma header (name, then a JSON description with "type" and "tags").
+function gmaInfo(g, a) {
+  if (a.info) return a.info;
+  let title = a.name.replace(/\.gma$/i, ''), tags = 'Addon';
+  try {
+    const real = g.files.resolve(`${ADDONS_DIR}\\${a.name}`), fd = fs.openSync(real, 'r'), b = new Uint8Array(8192), n = fs.readSync(fd, b, 0, b.length, 0); fs.closeSync(fd);
+    const td = new TextDecoder();
+    if (td.decode(b.subarray(0, 4)) === 'GMAD') {
+      let at = 4 + 1 + 8 + 8;
+      const str = () => { const end = b.indexOf(0, at); if (end < 0 || end > n) throw Error('short'); const v = td.decode(b.subarray(at, end)); at = end + 1; return v; };
+      if (b[4] > 1) while (str());
+      const t = str(); if (t) title = t;
+      try { const d = JSON.parse(str()); tags = ['Addon', d.type, ...(d.tags ?? [])].filter(Boolean).join(','); } catch { /* plain text description */ }
+    }
+  } catch { /* keep the file name */ }
+  return (a.info = { title: title.slice(0, 128), tags: tags.slice(0, 1024) });
+}
+// One SteamUGCDetails_t (Steamworks, 8-byte packing on 32-bit Windows): enough for Garry's Mod to mount and name an item.
+const DETAILS_SIZE = 9784;                 // through m_ulTotalFilesSize (newer SDKs; older ones read less)
+function detailsBytes(g, a) {
+  const b = new Uint8Array(DETAILS_SIZE), v = new DataView(b.buffer), te = new TextEncoder();
+  const put = (at, cap, str) => { const s = te.encode(str).subarray(0, cap - 1); b.set(s, at); };
+  const info = gmaInfo(g, a), now = Math.floor(Date.now() / 1000), t = Math.floor((a.mtime || Date.now()) / 1000) >>> 0;
+  v.setBigUint64(0, a.id, true);
+  v.setUint32(8, 1, true);                // m_eResult: k_EResultOK
+  v.setUint32(12, 0, true);               // m_eFileType: community item
+  v.setUint32(16, 4000, true); v.setUint32(20, 4000, true);
+  put(24, 129, info.title);               // m_rgchTitle
+  v.setUint32(8168, t, true); v.setUint32(8172, t, true); v.setUint32(8176, now, true);
+  b[8185] = 1;                            // m_bAcceptedForUse
+  put(8187, 1025, info.tags);
+  v.setUint32(9216, 1, true);             // m_hFile: some handle
+  put(9232, 260, a.name);                 // m_pchFileName
+  v.setUint32(9492, a.size >>> 0, true);  // m_nFileSize
+  v.setBigUint64(9776, BigInt(a.size), true);
+  return b;
+}
+function writeDetails(g, out, a) { g.u8.set(detailsBytes(g, a).subarray(0, 9772), out); }
+const writeStr = (g, buf, cap, str) => { if (!buf || cap <= 0) return; const n = Math.min(str.length, cap - 1); for (let i = 0; i < n; i++) g.u8[buf + i] = str.charCodeAt(i) & 255; g.u8[buf + n] = 0; };
+function ugcMethod(g, st, version, index, args) {
   const name = STEAM_NAMES[version]?.[index];
   switch (name) {
-    case 'CreateQueryUserUGCRequest': case 'CreateQueryAllUGCRequest': case 'CreateQueryUGCDetailsRequest':
-      return BigInt(st.nextQuery = (st.nextQuery ?? 0x100) + 1);
+    case 'GetNumSubscribedItems': { const list = subscribed(g); for (const a of list) (st.knownAddons ||= new Set()).add(a.id); st.knownAddons ||= new Set(); return list.length; }
+    case 'GetSubscribedItems': {             // (PublishedFileId_t *out, uint32 max, bool includeDisabled)
+      const list = subscribed(g), out = args[0], max = Math.min(list.length, args[1] >>> 0);
+      for (let i = 0; i < max && out; i++) { const v = list[i].id; g.u32(out + i * 8, Number(v & 0xffffffffn)); g.u32(out + i * 8 + 4, Number(v >> 32n)); }
+      return max;
+    }
+    case 'GetItemState': {                   // (PublishedFileId_t)
+      const id = asBig(args[0], args[1]);
+      return subscribed(g).some((a) => a.id === id) ? ITEM_SUBSCRIBED | ITEM_INSTALLED : 0;
+    }
+    case 'GetItemInstallInfo': {             // (PublishedFileId_t, uint64 *size, char *folder, uint32 cch, uint32 *timestamp)
+      const id = asBig(args[0], args[1]), a = subscribed(g).find((x) => x.id === id);
+      if (!a) return 0;
+      if (args[2]) { g.u32(args[2], a.size >>> 0); g.u32(args[2] + 4, Math.floor(a.size / 2 ** 32)); }
+      writeStr(g, args[3], args[4] | 0, `${ADDONS_DIR}\\.items\\${a.id}`);
+      if (args[5]) g.u32(args[5], Math.floor((a.mtime || Date.now()) / 1000) >>> 0);
+      return 1;
+    }
+    // Queries: details for given ids, and the player's subscribed list, are answered from the addons folder; others are empty.
+    case 'CreateQueryUserUGCRequest': case 'CreateQueryAllUGCRequest': case 'CreateQueryUGCDetailsRequest': {
+      const h = st.nextQuery = (st.nextQuery ?? 0x100) + 1;
+      let ids = null;
+      if (name === 'CreateQueryUGCDetailsRequest') { ids = []; for (let i = 0; i < Math.min(args[1] >>> 0, 1000); i++) ids.push(asBig(g.u32(args[0] + i * 8), g.u32(args[0] + i * 8 + 4))); }
+      else if (name === 'CreateQueryUserUGCRequest' && (args[1] >>> 0) === 5) ids = 'subscribed';   // k_EUserUGCList_Subscribed
+      (st.queries ||= new Map()).set(h, ids);
+      return BigInt(h);
+    }
     case 'SendQueryUGCRequest': {
-      const p = new Uint8Array(24), v = new DataView(p.buffer);
-      v.setBigUint64(0, asBig(args[0], args[1]), true); v.setInt32(8, 1, true);     // k_EResultOK, zero results
+      const h = Number(asBig(args[0], args[1])), want = st.queries?.get(h), all = subscribed(g);
+      const results = want === 'subscribed' ? all : Array.isArray(want) ? all.filter((a) => want.includes(a.id)) : [];
+      st.queries?.set(h, results);
+      const p = new Uint8Array(288), v = new DataView(p.buffer);
+      v.setBigUint64(0, BigInt(h), true); v.setInt32(8, 1, true); v.setUint32(12, results.length, true); v.setUint32(16, results.length, true);
       return queueApiCall(st, UGC_QUERY_COMPLETED, p);
     }
-    case 'ReleaseQueryUGCRequest': return 1;
-    case 'GetNumSubscribedItems': case 'GetSubscribedItems': case 'GetItemState': return 0;
-    case 'GetQueryUGCResult': case 'GetItemInstallInfo': case 'GetItemDownloadInfo': case 'DownloadItem': return 0;
+    case 'GetQueryUGCResult': {              // (UGCQueryHandle_t, uint32 index, SteamUGCDetails_t *out)
+      const results = st.queries?.get(Number(asBig(args[0], args[1]))), a = Array.isArray(results) ? results[args[2] >>> 0] : null;
+      if (!a || typeof a !== 'object' || !a.id || !args[3]) return 0;
+      writeDetails(g, args[3], a);
+      return 1;
+    }
+    // Details of one item (asked for when a new subscription is announced): SteamUGCRequestUGCDetailsResult_t.
+    case 'RequestUGCDetails': {              // (PublishedFileId_t, uint32 maxAgeSeconds)
+      const id = asBig(args[0], args[1]), a = subscribed(g).find((x) => x.id === id);
+      const p = new Uint8Array(DETAILS_SIZE + 8);
+      if (a) p.set(detailsBytes(g, a)); else { const v = new DataView(p.buffer); v.setBigUint64(0, id, true); v.setUint32(8, 9, true); }   // k_EResultFileNotFound
+      return queueApiCall(st, 3402, p);
+    }
+    case 'ReleaseQueryUGCRequest': st.queries?.delete(Number(asBig(args[0], args[1]))); return 1;
+    // The files are already here: a download "finishes" at once (DownloadItemResult_t), and reports everything downloaded.
+    case 'DownloadItem': {                   // (PublishedFileId_t, bool highPriority)
+      const id = asBig(args[0], args[1]), ok = subscribed(g).some((a) => a.id === id);
+      const p = new Uint8Array(24), v = new DataView(p.buffer);
+      v.setUint32(0, 4000, true); v.setBigUint64(8, id, true); v.setUint32(16, ok ? 1 : 9, true);
+      queueCallback(st, 3406, p);
+      return ok ? 1 : 0;
+    }
+    case 'GetItemDownloadInfo': {            // (PublishedFileId_t, uint64 *downloaded, uint64 *total)
+      const a = subscribed(g).find((x) => x.id === asBig(args[0], args[1]));
+      if (!a) return 0;
+      for (const ptr of [args[2], args[3]]) if (ptr) { g.u32(ptr, a.size >>> 0); g.u32(ptr + 4, Math.floor(a.size / 2 ** 32)); }
+      return 1;
+    }
     default: return /^(Set|Add)/.test(name ?? '') && name !== 'AddItemToFavorites' ? 1 : undefined;
   }
 }
@@ -204,7 +344,8 @@ function voiceMethod(g, st, index, args) {
 function steamMethod(ctx, version, index, args) {
   const g = ctx.g, st = steamState(g);
   if (version.startsWith('STEAMUGC_INTERFACE_VERSION')) {
-    const r = ugcMethod(st, version, index, args);
+    if (DEBUG) g.log(`[steam] ugc ${STEAM_NAMES[version]?.[index] ?? index}(${args.map((a) => '0x' + (a >>> 0).toString(16)).join(', ')})`);
+    const r = ugcMethod(g, st, version, index, args);
     if (r !== undefined) return r;
   }
   if (DEBUG) g.log(`[steam] ${version}#${index}(${args.map((a) => '0x' + (a >>> 0).toString(16)).join(', ')})`);
@@ -481,8 +622,32 @@ const asBig = (lo, hi) => BigInt(lo >>> 0) | (BigInt(hi >>> 0) << 32n);
 
 // Steam's dispatcher: each completed API call goes to the CCallResult registered for it, and its callback id is
 // also broadcast to every registered CCallback of that id.
+// A .gma that appears while the game runs (installed from the Addons page) is announced the way Steam announces a new
+// subscription: RemoteStoragePublishedFileSubscribed_t, then ItemInstalled_t. Garry's Mod then mounts it, in the menu too,
+// and refreshes what depends on it (the map list). Checked about once a second.
+const PUBLISHED_FILE_SUBSCRIBED = 1321, ITEM_INSTALLED_CB = 3405;
+function announceNewAddons(g, st) {
+  const now = Date.now();
+  if (now - (st.addonsChecked ?? 0) < 1000) return;
+  st.addonsChecked = now;
+  const ids = subscribed(g).map((a) => a.id);
+  if (DEBUG && (st.addonLogs = (st.addonLogs ?? 0) + 1) % 30 === 1) g.log(`[steam] addon check #${st.addonLogs}: known ${st.knownAddons ? st.knownAddons.size : 'unset'}, now ${ids.length}`);
+  if (!st.knownAddons) return;          // the engine has not asked for its subscriptions yet; it will find them then
+  for (const id of ids) {
+    if (st.knownAddons.has(id)) continue;
+    st.knownAddons.add(id);
+    const sub = new Uint8Array(16), sv = new DataView(sub.buffer);
+    sv.setBigUint64(0, id, true); sv.setUint32(8, 4000, true);
+    queueCallback(st, PUBLISHED_FILE_SUBSCRIBED, sub);
+    const inst = new Uint8Array(32), iv = new DataView(inst.buffer);
+    iv.setUint32(0, 4000, true); iv.setBigUint64(8, id, true);
+    queueCallback(st, ITEM_INSTALLED_CB, inst);
+    g.log?.(`[steam] new addon ${id}: announced as subscribed and installed`);
+  }
+}
 function runCallbacks(g, dll) {
   const st = steamState(g);
+  try { announceNewAddons(g, st); } catch (e) { g.log?.(`[steam] addon check failed: ${e.message}`); }
   for (const handle of (st.pending ||= []).splice(0)) {
     const call = apiCalls(st).get(handle);
     if (!call) continue;

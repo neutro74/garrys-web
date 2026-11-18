@@ -7,6 +7,7 @@ import { hubUrl } from './hub.js';
 import { account, authHeaders } from './account.js';
 import { loadEmotes } from './emote-picker.js';
 import { icon } from './derma.js';
+import { dkConfirm } from './modal.js';
 
 const KEY = 'garrys-wasm.admin-token';
 const ss = { get: () => { try { return localStorage.getItem(KEY); } catch { return null; } }, set: (v) => { try { if (v) localStorage.setItem(KEY, v); else localStorage.removeItem(KEY); } catch { /* blocked */ } } };
@@ -145,7 +146,7 @@ export function mountAdmin(el) {
           ${m.id ? `<button class="btn mini" data-del="${esc(m.id)}" data-tip="Delete for everyone"><img class="si" src="${icon('delete')}" alt="Delete"></button>` : ''}</div>`).join('') || '<p class="none">No messages.</p>'}</div>`;
       for (const b of body.querySelectorAll('[data-room]')) b.onclick = () => { views.room = b.dataset.room; draw(); };
       for (const b of body.querySelectorAll('[data-del]')) b.onclick = () => act('delete', { room, id: b.dataset.del });
-      body.querySelector('[data-clear]').onclick = () => { if (confirm(`Hide every message in #${room} for everyone?`)) act('clear', { room }); };
+      body.querySelector('[data-clear]').onclick = async () => { if (await dkConfirm(`Hide every message in #${room} for everyone?`, { title: 'Clear channel', ok: 'Clear', danger: true })) act('clear', { room }); };
       body.querySelector('[data-ann]').onsubmit = (ev) => { ev.preventDefault(); const t = body.querySelector('[data-text]'); if (t.value.trim()) act('announce', { text: t.value }, () => { t.value = ''; }); };
     },
     games() {
@@ -160,7 +161,7 @@ export function mountAdmin(el) {
       body.innerHTML = `<h3>Accounts <small>${st.accounts.length}</small></h3><table class="grid"><tr><th>Account</th><th>Created</th><th>Last sign-in</th><th>Sessions</th><th></th></tr>
         ${st.accounts.map((a) => `<tr><td><b>${esc(a.user)}</b>${st.admins.includes(a.user) ? ' <small class="badge">admin</small>' : ''}</td><td><small>${when(a.created)}</small></td><td><small>${ago(a.lastLogin)}</small></td><td>${a.sessions}</td>
           <td class="acts"><button class="btn" data-signout="${esc(a.user)}">Sign out everywhere</button>${st.admins.includes(a.user) ? '' : `<button class="btn danger" data-ban-acct="${esc(a.user)}">Ban</button>`}</td></tr>`).join('')}</table>`;
-      for (const b of body.querySelectorAll('[data-signout]')) b.onclick = () => { if (confirm(`Sign ${b.dataset.signout} out on every device?`)) act('signout-account', { user: b.dataset.signout }); };
+      for (const b of body.querySelectorAll('[data-signout]')) b.onclick = async () => { if (await dkConfirm(`Sign ${b.dataset.signout} out on every device?`, { title: 'Sign out everywhere', ok: 'Sign out' })) act('signout-account', { user: b.dataset.signout }); };
       for (const b of body.querySelectorAll('[data-ban-acct]')) b.onclick = () => dialog('ban', { account: b.dataset.banAcct, name: b.dataset.banAcct });
     },
     hub() {
@@ -173,7 +174,7 @@ export function mountAdmin(el) {
         </table>
         <div class="row"><button class="btn danger" data-restart>Restart hub</button><span class="hint">Everyone reconnects by themselves within a few seconds.</span></div>
         <h3>Hub log</h3><pre class="logbox">${st.log.slice().reverse().map((l) => `<span class="${l.level}">${new Date(l.at).toLocaleTimeString()} ${esc(l.text)}</span>`).join('\n') || 'Nothing yet.'}</pre>`;
-      body.querySelector('[data-restart]').onclick = () => { if (confirm('Restart the hub now?')) act('restart', {}, () => setTimeout(refresh, 4000)); };
+      body.querySelector('[data-restart]').onclick = async () => { if (await dkConfirm('Restart the hub now? Everyone reconnects by themselves within a few seconds.', { title: 'Restart hub', ok: 'Restart', danger: true })) act('restart', {}, () => setTimeout(refresh, 4000)); };
     },
     // The server's own emojis and stickers (hub/emotes.mjs): everyone can use them in chat.
     async emotes() {
@@ -204,7 +205,7 @@ export function mountAdmin(el) {
         } catch (e) { msg.textContent = e.message; }
       };
       for (const b of body.querySelectorAll('[data-rm-emote]')) b.onclick = async () => {
-        if (!confirm('Remove this for everyone? Messages that used it show it as removed.')) return;
+        if (!(await dkConfirm('Remove this for everyone? Messages that used it show it as removed.', { title: 'Remove', ok: 'Remove', danger: true }))) return;
         const r = await fetch(`${hubHttp()}emotes/${b.dataset.rmEmote}`, { method: 'DELETE', headers: authHeaders() });
         if (!r.ok) showErr((await r.json().catch(() => ({}))).error ?? `Error ${r.status}`); else draw();
       };

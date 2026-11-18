@@ -75,6 +75,11 @@ self.onmessage=async({data:m})=>{
    const migrated=await migrateAddons().catch(e=>{console.warn('[storage] addon migration:',e.message);return [];});
    volume.mkdirSync(LIB,{recursive:true});
    for(const name of m.library??[])await libOpen(name).catch(e=>console.warn(`[storage] addon ${name}:`,e.message));
+   // Addons installed while playing start working at once (web/live-addons.lua, in lua/autorun/ for this session only;
+   // the menu lists what to mount in data/garrysweb/mount.txt, which starts empty since the engine mounts the rest itself).
+   try{const lua=await(await fetch(new URL('./live-addons.lua',import.meta.url))).text();volume.mkdirSync('/overlay/garrysmod/lua/autorun',{recursive:true});volume.writeFileSync('/overlay/garrysmod/lua/autorun/garrysweb_live_addons.lua',lua);}
+   catch(e){console.warn('[storage] live addons:',e.message);}
+   volume.rmSync('/overlay/garrysmod/data/garrysweb/mount.txt',{force:true});
    postMessage({type:'ready',migrated,library:[...lib.keys()]});serveOverlayRpc(m.buffer,served(volume),commit).catch(e=>postMessage({type:'fatal',error:e.message}));return;
   }
   let result;

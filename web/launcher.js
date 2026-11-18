@@ -9,6 +9,7 @@ import { mountChat, chatStyles, STATUS } from './chat-app.js';
 import { myProfile, saveProfile, uploadImage, removeImage, resizeImage, avatarEl, imageUrl, displayName, nameHue, getProfile, cachedProfile } from './profiles.js';
 import { dermaReady, icon } from './derma.js';
 import { cropImage } from './crop.js';
+import { dkConfirm, dkPrompt } from './modal.js';
 import { openPicker, emojiNode } from './emote-picker.js';
 import { prepareGameDir, syncCloud, gameDirName, stopWrites } from './cloud-sync.js';
 import { listSaves, saveEntries, deleteSave, writeSaveEntries } from './local-saves.js';
@@ -197,7 +198,7 @@ async function filesPanel(el) {
       if (ok) render();
     });
     body.querySelector('[data-clear]')?.addEventListener('click', async () => {
-      if (!confirm('Delete the downloaded game files? They download again as you play. Saves, addons and settings are kept.')) return;
+      if (!(await dkConfirm('Delete the downloaded game files? They download again as you play. Saves, addons and settings are kept.', { title: 'Clear downloaded files', ok: 'Delete', danger: true }))) return;
       for (const n of cacheNames) await caches.delete(n).catch(() => {});
       render();
     });
@@ -219,8 +220,8 @@ function accountBox(box, onChange) {
       <div class="row"><button class="btn" data-out>Sign out</button><button class="btn" data-pw>Change password</button></div><p class="hint" data-amsg></p></div>`;
     box.querySelector('[data-out]').onclick = async () => { await logout(); onChange(); };
     box.querySelector('[data-pw]').onclick = async () => {
-      const old = prompt('Current password:'); if (old === null) return;
-      const pass = prompt('New password (at least 6 characters):'); if (pass === null) return;
+      const old = await dkPrompt('Your current password:', { title: 'Change password', password: true, ok: 'Next' }); if (old === null) return;
+      const pass = await dkPrompt('Your new password (at least 6 characters):', { title: 'Change password', password: true, ok: 'Change' }); if (pass === null) return;
       try { await changePassword(old, pass); box.querySelector('[data-amsg]').textContent = 'Password changed. Other browsers are signed out.'; } catch (e) { box.querySelector('[data-amsg]').textContent = e.message; }
     };
     return;
@@ -400,7 +401,7 @@ function savesPanel(el, { onPlaySave, highlight, sharedNote }) {
         try { const r = await shareSave(await saveEntries(sv.file), { name: sv.name }); showLink(row, saveLink(r.code)); msg.textContent = ''; } catch (err) { msg.textContent = err.message; e.target.disabled = false; }
       });
       btn('Download', 'btn', async () => { const blob = encodeBackup((await saveEntries(sv.file)).map(([p, b]) => ['/overlay/garrysmod/' + p, b])); const u = URL.createObjectURL(blob), a = document.createElement('a'); a.href = u; a.download = `${sv.name}.gwb`; a.click(); setTimeout(() => URL.revokeObjectURL(u), 60e3); }).title = 'Download (import it from the game\'s Saves page)';
-      btn('Delete', 'btn', async () => { if (!confirm(`Delete the save “${sv.name}”?${account() ? ' It is removed from your account too.' : ''}`)) return; await deleteSave(sv.file); draw(); }).title = 'Delete';
+      btn('Delete', 'btn', async () => { if (!(await dkConfirm(`Delete the save “${sv.name}”?${account() ? ' It is removed from your account too.' : ''}`, { title: 'Delete save', ok: 'Delete', danger: true }))) return; await deleteSave(sv.file); draw(); }).title = 'Delete';
       row.append(img, info, btns);
       list.append(row);
     }
@@ -410,7 +411,7 @@ function savesPanel(el, { onPlaySave, highlight, sharedNote }) {
       catch (err) { msg.textContent = err.message; e.target.disabled = false; }
     });
     body.querySelector('[data-open]').onclick = async () => {
-      const text = prompt('Paste a shared save link or code:');
+      const text = await dkPrompt('Paste a shared save link or code:', { title: 'Open a shared save', placeholder: 'https://… or code', ok: 'Open' });
       const code = /(?:[?&]save=|^)([A-Za-z0-9_-]{6,12})\s*$/.exec(String(text ?? '').trim())?.[1];
       if (!code) return;
       try { const file = await writeSaveEntries(await fetchShare(code)); highlight = file; note = 'Added the shared save to your saves.'; draw(); } catch (err) { msg.textContent = err.message; }
@@ -475,7 +476,7 @@ function versionsPanel(el, { ext, onPlay, highlight }) {
         <p class="hint" data-msg>${esc(note)}</p></div>`;
     el.querySelector('[data-new]').onclick = () => { editing = { id: newVersionId(), name: '', edition: ext ? 'extended' : 'base', addons: [], disabled: [], author: store.get('name', '') }; results = []; draw(); };
     el.querySelector('[data-import]')?.addEventListener('click', async () => {
-      const text = prompt('Paste a shared version link or code:');
+      const text = await dkPrompt('Paste a shared version link or code:', { title: 'Open a shared version', placeholder: 'https://… or code', ok: 'Open' });
       const code = /(?:[?&]v=|^)([A-Za-z0-9_-]{4,16})\s*$/.exec(String(text ?? '').trim())?.[1];
       if (!code) return;
       try { const v = await importShared(code); highlight = v.id; note = `Added “${v.name}”.`; } catch (e) { note = e.message; }
@@ -485,7 +486,7 @@ function versionsPanel(el, { ext, onPlay, highlight }) {
       const v = getVersion(row.dataset.v);
       row.querySelector('[data-act="play"]').onclick = () => onPlay(v);
       row.querySelector('[data-act="edit"]').onclick = () => { editing = structuredClone(v); results = []; draw(); };
-      row.querySelector('[data-act="del"]').onclick = () => { if (confirm(`Delete “${v.name}”? Its addons stay in your library.`)) { removeVersion(v.id); draw(); } };
+      row.querySelector('[data-act="del"]').onclick = async () => { if (await dkConfirm(`Delete “${v.name}”? Its addons stay in your library.`, { title: 'Delete version', ok: 'Delete', danger: true })) { removeVersion(v.id); draw(); } };
       row.querySelector('[data-act="share"]')?.addEventListener('click', async (e) => {
         const box = row.querySelector('.vshare'); box.hidden = false; box.textContent = 'Sharing…';
         try {

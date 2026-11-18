@@ -7,6 +7,7 @@ import { account, authHeaders } from './account.js';
 import { getProfile, cachedProfile, forget, onProfiles, avatarEl, displayName, imageUrl, nameHue, resizeImage } from './profiles.js';
 import { dermaReady, icon } from './derma.js';
 import { voiceClient } from './voice-chat.js';
+import { dkConfirm, dkPrompt } from './modal.js';
 import { openPicker, loadEmotes, onEmotes, emojiUrl, stickerUrl, stickerName, emojiNode, savedGifs, saveGif } from './emote-picker.js';
 
 const P = 'garrys-wasm.';
@@ -151,7 +152,7 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
     }
     drawVoice(frag);
     const dmHead = h('div', 'gwc-cat gwc-dmcat', si('email'), h('span', null, 'Private messages'));
-    if (myAccount()) { const add = h('button', 'gwc-add', '+'); add.title = 'Start a private chat'; add.onclick = () => { const u = prompt('Username to message:'); if (u?.trim()) open({ kind: 'dm', with: u.trim().toLowerCase().replace(/^@/, '') }); }; dmHead.append(add); }
+    if (myAccount()) { const add = h('button', 'gwc-add', '+'); add.title = 'Start a private chat'; add.onclick = async () => { const u = await dkPrompt('Who do you want to message? (their Garry\'s Web username)', { title: 'New private chat', placeholder: 'username', ok: 'Message' }); if (u?.trim()) open({ kind: 'dm', with: u.trim().toLowerCase().replace(/^@/, '') }); }; dmHead.append(add); }
     frag.append(dmHead);
     if (!myAccount()) frag.append(h('p', 'gwc-hint', 'Sign in to a Garry\'s Web account for private chats and friends.'));
     for (const c of convos) {
@@ -378,7 +379,7 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
     btn('arrow_undo', 'Reply', () => { replyTo = m; editing = null; drawReplyBar(); text.focus(); });
     if (mine) btn('pencil', 'Edit', () => startEdit(m));
     btn('page_copy', 'Copy text', () => navigator.clipboard?.writeText(m.text).catch(() => {}));
-    if (canDel) btn('delete', 'Delete', () => { if (confirm('Delete this message?')) hub.remove(whereOf(), m.id); });
+    if (canDel) btn('delete', 'Delete', async () => { if (await dkConfirm('Delete this message for everyone?', { title: 'Delete message', ok: 'Delete', danger: true })) hub.remove(whereOf(), m.id); });
     return bar;
   }
   function shareEmbed(code) {
@@ -438,11 +439,11 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
       const f = hub.friends ?? {}, row = h('div', 'gwc-cardbtns');
       const btn = (label, fn, cls = 'dk-btn') => { const b = h('button', cls, label); b.type = 'button'; b.onclick = () => { fn(); closePop(); }; row.append(b); };
       btn('Message', () => open({ kind: 'dm', with: u }), 'dk-btn blue');
-      if (f.friends?.some((x) => x.user === u)) btn('Remove friend', () => confirm(`Remove ${u} from your friends?`) && hub.friend('friend-remove', u));
+      if (f.friends?.some((x) => x.user === u)) btn('Remove friend', async () => (await dkConfirm(`Remove ${u} from your friends?`, { title: 'Remove friend', ok: 'Remove', danger: true })) && hub.friend('friend-remove', u));
       else if (f.incoming?.includes(u)) btn('Accept friend request', () => hub.friend('friend-accept', u));
       else if (f.outgoing?.includes(u)) btn('Request sent', () => hub.friend('friend-remove', u));
       else btn('Add friend', () => hub.friend('friend-add', u));
-      if (f.blocked?.includes(u)) btn('Unblock', () => hub.friend('unblock', u)); else btn('Block', () => confirm(`Block ${u}? You will not see their private messages or requests.`) && hub.friend('block', u));
+      if (f.blocked?.includes(u)) btn('Unblock', () => hub.friend('unblock', u)); else btn('Block', async () => (await dkConfirm(`Block ${u}? You will not see their private messages or requests.`, { title: 'Block', ok: 'Block', danger: true })) && hub.friend('block', u));
       body.append(row);
     } else if (u && u === me) {
       const b = h('button', 'dk-btn blue', 'Edit profile'); b.type = 'button'; b.onclick = () => { closePop(); onEditProfile(); }; body.append(h('div', 'gwc-cardbtns', b));
@@ -474,7 +475,7 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
     }
     let list = [];
     if (tab === 'online') list = f.friends.filter((x) => presence(x.user).status !== 'offline').map((x) => row(x.user, ['Message', () => open({ kind: 'dm', with: x.user }), 'primary']));
-    if (tab === 'all') list = f.friends.map((x) => row(x.user, ['Message', () => open({ kind: 'dm', with: x.user }), 'primary'], ['Remove', () => confirm(`Remove ${x.user} from your friends?`) && hub.friend('friend-remove', x.user)]));
+    if (tab === 'all') list = f.friends.map((x) => row(x.user, ['Message', () => open({ kind: 'dm', with: x.user }), 'primary'], ['Remove', async () => (await dkConfirm(`Remove ${x.user} from your friends?`, { title: 'Remove friend', ok: 'Remove', danger: true })) && hub.friend('friend-remove', x.user)]));
     if (tab === 'pending') list = [...f.incoming.map((u) => row(u, ['Accept', () => hub.friend('friend-accept', u), 'primary'], ['Ignore', () => hub.friend('friend-remove', u)])),
       ...f.outgoing.map((u) => row(u, ['Cancel request', () => hub.friend('friend-remove', u)]))];
     if (tab === 'blocked') list = f.blocked.map((u) => row(u, ['Unblock', () => hub.friend('unblock', u)]));

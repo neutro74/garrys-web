@@ -8,6 +8,7 @@
 // Requests go to the page through window.__gmodHost (see the bridge in html-panels.js and menuHost in storage.js).
 
 import { impact } from './library.js';
+import { dkConfirm, dkPrompt, dkChoose, dkCopy } from './modal.js';
 
 const host = (op, args) => window.__gmodHost(op, args);
 
@@ -36,6 +37,10 @@ const scopeOf = (el) => window.angular?.element(el).scope();
 const refresh = (page) => { const s = scopeOf(page); if (s?.Switch) s.$apply(() => s.Switch(s.Category, 0)); };
 // Lua runs in the menu state; mounting makes an installed addon's content available without a restart.
 const lua = (code) => { try { window.lua?.Run(code); } catch { /* not in engine */ } };
+// An addon installed now: listed for web/live-addons.lua, which mounts it in the running game (server and client) and runs
+// its Lua, as Workshop subscriptions do. In the menu, the next map picks it up the same way.
+const liveMount = (name) => lua(`file.CreateDir("garrysweb") file.Write("garrysweb/mount.txt", (file.Read("garrysweb/mount.txt", "DATA") or "") .. "${String(name).replace(/[^\w.-]/g, '')}\\n")`);
+let inGameNow = false;
 
 // Addons page. GMod's own views need Steam, so they are replaced (in the page's own markup) by:
 //   Installed: the addons bundled with the edition (each can be switched off; applied at the next start) and the .gma files
@@ -77,13 +82,13 @@ async function addonsSidebar(page, ul) {
     status.textContent = `Installing ${file.name}…`;
     try {
       const name = await host('install-addon', { file });
-      lua(`if game.MountGMA then game.MountGMA("addons/${name}") end`);
-      status.textContent = `Installed ${file.name}. It loads with the next map.`;
+      liveMount(name);
+      status.textContent = inGameNow ? `Installed ${file.name}. It is ready to use now.` : `Installed ${file.name}.`;
     } catch (e) { status.textContent = `Could not install ${file.name}: ${e.message}`; }
     load();
   });
   const fromLink = item('Install from Workshop link…', async () => {
-    const text = prompt('Paste a Workshop link or item number (steamcommunity.com/sharedfiles/filedetails/?id=…):');
+    const text = await dkPrompt('Paste a Workshop link or item number (steamcommunity.com/sharedfiles/filedetails/?id=…):', { title: 'Install from the Workshop', placeholder: 'https://steamcommunity.com/sharedfiles/filedetails/?id=…', ok: 'Install' });
     const id = /(?:[?&]id=|^)(\d{4,20})/.exec(String(text ?? '').trim())?.[1];
     if (!id) { if (text) status.textContent = 'That is not a Workshop link.'; return; }
     try { const [d] = await host('workshop-details', { ids: [id] }); if (!d?.ok) throw Error('That is not an available Garry\'s Mod Workshop item.'); install(d); } catch (e) { status.textContent = e.message; }
@@ -131,7 +136,7 @@ async function addonsSidebar(page, ul) {
     controls: [a.bundled
       ? control(a.enabled ? 'Disable' : 'Enable', async () => { try { await host('set-addon-enabled', { name: a.name, enabled: !a.enabled }); a.enabled = !a.enabled; render(); } catch (e) { status.textContent = e.message; } })
       : control('Remove', async () => {
-        if (!confirm(`Remove "${a.title}"? It is deleted from this browser.`)) return;
+        if (!(await dkConfirm(`Remove "${a.title}"? It is deleted from this browser.`, { title: 'Remove addon', ok: 'Remove', danger: true }))) return;
         try { await host('remove-addon', { name: a.file }); status.textContent = `Removed ${a.title}. Restart the game to unload it.`; } catch (e) { status.textContent = e.message; }
         load();
       })],
@@ -158,8 +163,8 @@ async function addonsSidebar(page, ul) {
     }, 700);
     try {
       const name = await host('workshop-install', { id: d.id, title: d.title });
-      lua(`if game.MountGMA then game.MountGMA("addons/${name}") end`);
-      status.textContent = `Installed ${d.title}. It loads with the next map.`;
+      liveMount(name);
+      status.textContent = inGameNow ? `Installed ${d.title}. It is ready to use now.` : `Installed ${d.title}.`;
     } catch (e) { status.textContent = `${d.title}: ${e.message}`; }
     clearInterval(tick); installing.delete(d.id);
     await load();
@@ -255,7 +260,7 @@ function savesSidebar(page, ul) {
     : `Saves follow your account${c.user ? ` (${c.user})` : ''}.${c.at ? ` Last synced ${new Date(c.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.` : ''}${c.quota ? ` ${Math.round(c.used / 1048576)} of ${Math.round(c.quota / 1048576)} MB used.` : ''}`;
   host('cloud-status').then((c) => { cloud.textContent = cloudText(c); syncNow.style.display = c.signedIn ? '' : 'none'; }).catch(() => {});
   const openCode = item('Open a shared save…', async () => {
-    const text = prompt('Paste a shared save link or code:');
+    const text = await dkPrompt('Paste a shared save link or code:', { title: 'Open a shared save', placeholder: 'https://… or code', ok: 'Open' });
     const code = /(?:[?&]save=|^)([A-Za-z0-9_-]{6,12})\s*$/.exec(String(text ?? '').trim())?.[1];
     if (!code) { if (text) status.textContent = 'That is not a shared save link.'; return; }
     add({ code, name: code }, false);
@@ -279,16 +284,18 @@ function savesSidebar(page, ul) {
   const share = async (file) => {
     const info = file?.info ?? {};
     if (!info.file) return;
-    const name = prompt('Name for the shared save:', info.name ?? '');
+    const name = await dkPrompt('Name for the shared save:', { title: 'Share save', value: info.name ?? '', ok: 'Next' });
     if (name === null) return;
-    const listed = confirm('List it under Community saves for everyone?\n\nOK: listed. Cancel: only people with the link can open it.');
+    const how = await dkChoose('Who can find it? Listed saves show under Community saves for everyone; unlisted ones only open with the link.', { title: 'Share save', choices: [['listed', 'List it for everyone'], ['link', 'Link only']] });
+    if (how === null) return;
+    const listed = how === 'listed';
     status.textContent = `Sharing ${name || info.name}…`;
     let map = '';
     try { map = await saveMap(info.file); } catch { /* unknown */ }
     try {
       const r = await host('save-share', { file: info.file, name, map, listed });
       status.textContent = '';
-      dialog('Save shared', `Anyone with this link can play “${r.name}”:`, r.link);
+      dkCopy(`Anyone with this link can play “${r.name}”:`, r.link, { title: 'Save shared' });
     } catch (e) { status.textContent = e.message; }
   };
   if (scope) { scope.PublishLocal = share; scope.$applyAsync?.(); }
@@ -320,8 +327,8 @@ function savesSidebar(page, ul) {
       img.style.cssText = 'width:180px;height:180px;object-fit:cover'; img.onerror = () => { img.onerror = null; img.removeAttribute('crossorigin'); img.src = '../img/localaddon.png'; };
       const pv = el('preview', {}, img); pv.style.cssText = 'left:0;top:0;width:180px;height:180px';
       const control = (t, fn) => { const c = el('control', { textContent: t }); c.addEventListener('click', fn); return c; };
-      const controls = [control('Load', () => add(s, true)), control('Add', () => add(s, false)), control('Link', () => dialog('Shared save', `Link to “${s.name}”:`, s.link))];
-      if (s.mine) controls.push(control('Remove', async () => { if (!confirm(`Stop sharing “${s.name}”?`)) return; try { await host('save-unshare', { code: s.code }); browse(view); } catch (e) { status.textContent = e.message; } }));
+      const controls = [control('Load', () => add(s, true)), control('Add', () => add(s, false)), control('Link', () => dkCopy(`Link to “${s.name}”:`, s.link, { title: 'Shared save' }))];
+      if (s.mine) controls.push(control('Remove', async () => { if (!(await dkConfirm(`Stop sharing “${s.name}”?`, { title: 'Stop sharing', ok: 'Stop sharing', danger: true }))) return; try { await host('save-unshare', { code: s.code }); browse(view); } catch (e) { status.textContent = e.message; } }));
       icon.append(pv, el('name', {}, el('label', { textContent: s.name, title: s.name })), el('author', { textContent: `by ${s.author}` }),
         el('votes', { textContent: `${s.downloads} load${s.downloads === 1 ? '' : 's'}` }), el('description', { textContent: `${s.map ? 'Map: ' + s.map + '. ' : ''}${s.desc ?? ''}` }), el('controls', {}, el('left'), el('right', {}, ...controls)));
       return icon;
@@ -336,18 +343,6 @@ function saveMap(file) {
     lua(`local i = GetSaveFileDetails and GetSaveFileDetails("${file.replace(/["\\]/g, '')}") or {} if IsValid(pnlMainMenu) then pnlMainMenu:Call("window.__gwSaveInfo && __gwSaveInfo['${id}'] && __gwSaveInfo['${id}']('" .. string.JavascriptSafe(util.TableToJSON({ map = i.map or "" })) .. "')") end`);
     setTimeout(() => { if (window.__gwSaveInfo?.[id]) { delete window.__gwSaveInfo[id]; resolve(''); } }, 1500);
   });
-}
-// A small box in the menu page with text to copy (Derma popups draw behind the HTML menu).
-function dialog(heading, text, value) {
-  const back = el('div'); back.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100000;display:grid;place-items:center';
-  const box = el('div'); box.style.cssText = 'background:#fff;color:#333;border-radius:6px;padding:18px 20px;width:min(520px,90vw);font:14px Helvetica,Arial,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.5)';
-  const input = el('input', { value, readOnly: true }); input.style.cssText = 'width:100%;box-sizing:border-box;padding:8px;margin:10px 0;border:1px solid #bbb;border-radius:4px;font:13px monospace';
-  const btn = (t, fn) => { const b = el('button', { textContent: t }); b.style.cssText = 'margin-right:8px;padding:6px 14px;border:0;border-radius:4px;background:#1194f0;color:#fff;font-weight:bold;cursor:pointer'; b.onclick = fn; return b; };
-  const close = () => back.remove();
-  box.append(el('b', { textContent: heading }), el('div', { textContent: text }), input,
-    btn('Copy', async (e) => { input.select(); try { await navigator.clipboard.writeText(value); e.target.textContent = 'Copied'; } catch { document.execCommand?.('copy'); e.target.textContent = 'Copied'; } }), btn('Close', close));
-  back.append(box); back.addEventListener('click', (e) => { if (e.target === back) close(); });
-  document.body.append(back); input.select();
 }
 
 // Multiplayer: GMod's own server browser, Start New Game and Join, with the browser's networking behind them.
@@ -553,6 +548,7 @@ async function serverBrowser() {
   // Also tells friends what the player is doing (the map, or the main menu), when that changes.
   let lastActivity = '';
   window.__gwInGame = (inGame, map = '') => {
+    inGameNow = !!inGame;
     if (!inGame && listed && Date.now() - starting > 60e3) { listed = false; host('lobby-unhost').catch(() => {}); }
     const now = `${inGame}|${map}`;
     if (now !== lastActivity) { lastActivity = now; host('activity', { inGame: !!inGame, map: String(map).replace(/\.bsp$/i, '') }).catch(() => {}); }

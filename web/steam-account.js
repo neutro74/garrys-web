@@ -2,6 +2,7 @@
 // Steam login with Valve. The browser keeps the key that unlocks this player's Steam session on the hub; nothing else
 // about the Steam account is stored here except its SteamID and account name for display.
 import { hubHttp } from './library.js';
+import { dkCopy } from './modal.js';
 
 const K = 'garrys-wasm.steam';
 export const BASE_ID = 76561197960265728n;
@@ -54,7 +55,7 @@ export function steamBox(box, esc) {
     qr.innerHTML = `<div class="steam-qr">${s.svg}</div>
       <div class="row"><a class="btn" href="${esc(s.url)}" target="_blank" rel="noopener" data-open>Open sign-in</a><button class="btn" type="button" data-copy>Copy link</button></div>`;
     qr.querySelector('[data-copy]').onclick = async (e) => {
-      try { await navigator.clipboard.writeText(s.url); e.target.textContent = 'Copied'; } catch { prompt('Copy this link:', s.url); }
+      try { await navigator.clipboard.writeText(s.url); e.target.textContent = 'Copied'; } catch { dkCopy('Copy this link and open it on the device with the Steam app:', s.url, { title: 'Steam sign-in link' }); }
     };
     msg.textContent = 'Scan the code with the Steam mobile app (Steam Guard → scan), or open the link on your phone, then approve.';
     const poll = async () => {

@@ -3,128 +3,58 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Garry's Web</title>
 <meta name="description" content="Garry's Mod, running in your browser.">
-<meta name="theme-color" content="#245edb">
+<meta name="theme-color" content="#1194f0">
 <link rel="icon" href="/web/brand/favicon.ico" sizes="16x16 32x32">
 <link rel="icon" type="image/png" href="/web/brand/icon-192.png" sizes="192x192">
 <link rel="apple-touch-icon" href="/web/brand/icon-180.png">
 <link rel="stylesheet" href="/web/launcher.css">
 <style>
-  html, body { margin: 0; height: 100%; background: #3a6ea5; overflow: hidden; }
+  html, body { margin: 0; height: 100%; background: #0b5fae; overflow: hidden; }
   canvas#screen { display: block; width: 100vw; height: 100vh; object-fit: contain; background: #000; }
-
-  /* ---- An early-2000s desktop, drawn here (no pictures to load), for starting the game: the splash below and the
-     launcher's game loading screen (web/launcher.js loading()) both use these .xp-* pieces. Original artwork in the
-     style of the era: sky, rolling hills, a blue-titled window, a green block progress bar and a taskbar. ---- */
-  .xp-desktop { position: fixed; inset: 0; overflow: hidden; font: 11px Tahoma, Verdana, "Segoe UI", sans-serif; color: #000; user-select: none;
-    background:
-      radial-gradient(ellipse 85% 38% at 22% 100%, #8fd14f 0%, #5ea72e 45%, #3f7f1c 70%, transparent 70.5%),
-      radial-gradient(ellipse 95% 42% at 88% 104%, #7cc244 0%, #4f9426 48%, #356f17 72%, transparent 72.5%),
-      radial-gradient(ellipse 130% 30% at 50% 102%, #69b23a 0%, #448a20 60%, transparent 60.5%),
-      radial-gradient(ellipse 22% 5% at 22% 26%, rgba(255, 255, 255, .85), transparent 70%),
-      radial-gradient(ellipse 14% 4% at 30% 24%, rgba(255, 255, 255, .7), transparent 70%),
-      radial-gradient(ellipse 18% 4% at 72% 17%, rgba(255, 255, 255, .75), transparent 70%),
-      radial-gradient(ellipse 10% 3% at 80% 20%, rgba(255, 255, 255, .6), transparent 70%),
-      linear-gradient(#1f5fc8 0%, #3f86de 30%, #79b4ee 58%, #c3e1fa 74%, #e8f4fd 82%); }
-  .xp-icons { position: absolute; left: 10px; top: 10px; display: flex; flex-direction: column; gap: 18px; }
-  .xp-icon { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 76px; color: #fff; text-align: center; text-shadow: 1px 1px 1px #000; }
-  .xp-icon img { width: 32px; height: 32px; image-rendering: auto; }
-  .xp-icon.pix img { image-rendering: pixelated; }
-  .xp-icon span { padding: 0 2px; }
-  .xp-icon.sel img { filter: brightness(.75) sepia(1) hue-rotate(185deg) saturate(3); }
-  .xp-icon.sel span { background: #316ac5; text-shadow: none; outline: 1px dotted #fff; }
-
-  .xp-win { position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%); width: min(430px, calc(100vw - 24px)); display: flex; flex-direction: column;
-    border: 3px solid #0831d9; border-top: 0; border-radius: 8px 8px 0 0; background: #ece9d8; box-shadow: 2px 3px 10px rgba(0, 0, 0, .45); animation: xp-open .18s ease-out; }
-  @keyframes xp-open { from { opacity: 0; transform: translate(-50%, -47%) scale(.96); } }
-  .xp-title { display: flex; align-items: center; gap: 5px; height: 29px; margin: 0 -3px; padding: 0 5px 0 6px; border-radius: 7px 7px 0 0; color: #fff;
-    font: bold 13px Trebuchet MS, Tahoma, sans-serif; text-shadow: 1px 1px #0f1089;
-    background: linear-gradient(#0997ff 0%, #0053ee 8%, #0050ee 40%, #06f 88%, #06f 93%, #005bff 95%, #003dd7 96%, #003dd7 100%); }
-  .xp-title img { width: 16px; height: 16px; }
-  .xp-title span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .xp-tb { display: inline-grid; place-items: center; width: 21px; height: 21px; margin-left: 2px; border: 1px solid #fff; border-radius: 3px; box-sizing: border-box;
-    background: radial-gradient(circle at 90% 90%, #0054e9 0%, #2263d5 55%, #4479e4 70%, #a3bbec 90%, #fff 100%); box-shadow: inset 0 -1px 2px rgba(0, 0, 0, .3); }
-  .xp-tb::before { content: ""; display: block; }
-  .xp-tb.min::before { width: 8px; height: 3px; margin-top: 7px; background: #fff; }
-  .xp-tb.max::before { width: 9px; height: 8px; border: 1px solid #fff; border-top-width: 3px; box-sizing: border-box; }
-  .xp-tb.close { background: radial-gradient(circle at 90% 90%, #cc4600 0%, #dc6527 55%, #cd7546 70%, #ffccb2 90%, #fff 100%); }
-  .xp-tb.close::before { content: "\2715"; color: #fff; font: bold 13px Verdana, sans-serif; line-height: 1; }
-  .xp-tb:is(button) { padding: 0; cursor: pointer; }
-  .xp-tb:is(button):hover { filter: brightness(1.15); }
-  .xp-body { display: flex; flex-direction: column; gap: 9px; padding: 12px 12px 11px; }
-  .xp-row { display: flex; align-items: center; gap: 12px; }
-  .xp-row > img { flex: none; width: 48px; height: 48px; object-fit: cover; border: 1px solid #fff; outline: 1px solid #919b9c; }
-  .xp-lines { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-  .xp-lines b { font-size: 12px; }
-  .xp-lines span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .xp-progress { position: relative; height: 15px; padding: 2px; border: 1px solid #686868; border-radius: 3px; background: #fff; box-shadow: inset 1px 1px 1px #b6b6b6; overflow: hidden; }
-  .xp-progress > i { display: block; height: 100%; width: 0; border-radius: 1px; transition: width .4s ease;
-    background: linear-gradient(rgba(255, 255, 255, .55), rgba(255, 255, 255, 0) 45%, rgba(0, 0, 0, .06)), repeating-linear-gradient(90deg, #37d339 0 8px, transparent 8px 10px); }
-  .xp-progress.marquee > i { position: absolute; top: 2px; bottom: 2px; width: 42px; height: auto; animation: xp-marquee 2.2s linear infinite; }
-  @keyframes xp-marquee { from { left: -46px; } to { left: 100%; } }
-  .xp-progress.bad > i { filter: hue-rotate(250deg) saturate(1.6); }
-  .xp-status { min-height: 14px; overflow-wrap: anywhere; }
-  .xp-details { height: 92px; overflow: hidden; padding: 3px 4px; border: 1px solid #7f9db9; background: #fff; color: #444; display: flex; flex-direction: column; justify-content: flex-end; }
-  .xp-details div { flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .xp-details div:last-child { color: #000; }
-  .xp-buttons { display: flex; justify-content: flex-end; gap: 6px; }
-  .xp-btn { min-width: 75px; height: 23px; padding: 0 10px; border: 1px solid #003c74; border-radius: 3px; font: 11px Tahoma, Verdana, sans-serif; color: #000; cursor: pointer;
-    background: linear-gradient(#fff, #ecebe6 86%, #d6d0c5); box-shadow: inset -1px -1px #d6d0c5, inset 1px 1px #fff; }
-  .xp-btn:hover { box-shadow: inset 0 0 0 2px #fbc762, inset 0 -2px #e5a01a; }
-  .xp-btn:focus-visible { outline: 1px dotted #000; outline-offset: -4px; }
-  .xp-btn:active { background: linear-gradient(#cdcac3, #e3e3db 14%, #f2f1eb); }
-  .xp-msg { display: flex; gap: 12px; align-items: flex-start; }
-  .xp-msg pre { margin: 6px 0 0; max-height: 110px; overflow: auto; padding: 4px 6px; border: 1px solid #7f9db9; background: #fff; color: #a00; font: 11px Consolas, monospace; white-space: pre-wrap; }
-  .xp-erricon { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; color: #fff; font: bold 20px Verdana, sans-serif;
-    background: radial-gradient(circle at 35% 30%, #ff8a7a, #e0201a 55%, #a00 100%); box-shadow: 1px 1px 2px rgba(0, 0, 0, .4); }
-  .xp-erricon::before { content: "\2715"; }
-  .xp-taskbar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; height: 30px; color: #fff;
-    background: linear-gradient(#1f2f86 0, #3165c4 3%, #3682e5 6%, #4490e6 10%, #3883e5 12%, #2b71e0 15%, #2663da 18%, #235bd6 20%, #2258d5 23%, #2157d6 38%, #245ddb 54%, #2562df 86%, #245fdc 89%, #2158d4 92%, #1d4ec0 95%, #1941a5 98%); }
-  .xp-start { display: flex; align-items: center; gap: 4px; height: 100%; padding: 0 22px 2px 9px; border-radius: 0 10px 10px 0; color: #fff;
-    font: italic bold 18px "Franklin Gothic Medium", "Trebuchet MS", Tahoma, sans-serif; text-shadow: 1px 1px 2px #1b3d0d; box-shadow: inset -2px 0 3px rgba(0, 0, 0, .25), 2px 0 3px rgba(0, 0, 0, .3);
-    background: linear-gradient(#3c8f3c 0%, #43b343 10%, #4fc24f 50%, #3ea83e 85%, #2c7e2c 100%); }
-  .xp-start img { width: 20px; height: 20px; filter: drop-shadow(1px 1px 1px rgba(0, 0, 0, .4)); }
-  .xp-task { display: flex; align-items: center; gap: 5px; width: 170px; max-width: 32vw; height: 24px; margin-left: 8px; padding: 0 8px; border-radius: 3px; overflow: hidden; white-space: nowrap;
-    background: #1e52b7; box-shadow: inset 1px 1px 2px rgba(0, 0, 0, .45); }
-  .xp-task img { width: 16px; height: 16px; }
-  .xp-tray { display: flex; align-items: center; gap: 8px; margin-left: auto; height: 100%; padding: 0 12px 0 14px; border-left: 1px solid #1042af;
-    background: linear-gradient(#0c59b9 1%, #139ee9 6%, #18b5f2 10%, #139beb 14%, #1290e8 19%, #0d8dea 63%, #0d9ff1 81%, #0f9eed 88%, #119be9 91%, #1392e2 94%, #137ed7 97%, #095bc9 100%); box-shadow: inset 1px 0 1px #18bbff; }
-  @media (max-width: 520px) { .xp-icons { display: none; } .xp-task { display: none; } }
-  @media (prefers-reduced-motion: reduce) { .xp-win { animation: none; } .xp-progress.marquee > i { animation-duration: 6s; } }
-
-  /* The splash: shown from the first byte until the launcher or the game takes over. #status is the line the launcher and
-     the game write their progress and errors to. */
-  #splash { z-index: 10; transition: opacity .35s ease, visibility .35s; }
+  /* The splash: shown from the first byte (everything it needs is in this file) until the launcher or the game takes over.
+     Garry's Web blue with the logo and a Derma-style bar; #status is the line the launcher and the game write to. */
+  #splash { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; overflow: hidden; color: #fff;
+    font: bold 13px Tahoma, Verdana, Helvetica, Arial, sans-serif; transition: opacity .4s ease, visibility .4s;
+    background: radial-gradient(ellipse 90% 70% at 50% 42%, #2aa6ff 0%, #1194f0 30%, #0b6fd0 62%, #08509c 100%); }
+  /* A soft light sweeping across, slowly: "something is happening" without a spinner. */
+  #splash::before { content: ""; position: absolute; inset: -20% -60%; pointer-events: none; opacity: .5;
+    background: linear-gradient(115deg, transparent 40%, rgba(255, 255, 255, .16) 50%, transparent 60%); animation: gw-sweep 5s ease-in-out infinite; }
+  @keyframes gw-sweep { from { transform: translateX(-35%); } to { transform: translateX(35%); } }
   body.launcher-ready #splash, #splash:has(#status:empty) { opacity: 0; visibility: hidden; pointer-events: none; }
-  #splash .xp-logo { display: block; width: min(288px, 70vw); height: auto; margin: 2px auto 4px; }
-  #splash .gw-tip { min-height: 28px; color: #444; line-height: 14px; transition: opacity .4s; }
+  .gw-splash { position: relative; display: flex; flex-direction: column; align-items: center; gap: 18px; width: min(400px, calc(100vw - 32px)); }
+  .gw-splash img { width: min(288px, 72vw); height: auto; filter: drop-shadow(0 6px 14px rgba(0, 20, 60, .45)); }
+  /* GMod's DProgress: a dark inset track with a lit blue fill; here moving back and forth until there is a real number. */
+  .gw-bar { position: relative; width: 100%; height: 14px; overflow: hidden; border-radius: 3px; background: linear-gradient(#1a2c44, #25405f);
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, .7), 0 1px 0 rgba(255, 255, 255, .25); }
+  .gw-bar::after { content: ""; position: absolute; top: 1px; bottom: 1px; left: 0; width: 34%; border-radius: 2px;
+    background: linear-gradient(#9fd8ff, #3aa9f5 45%, #1a86e0 55%, #2b9bf0); box-shadow: 0 0 8px rgba(120, 200, 255, .8); animation: gw-slide 1.6s ease-in-out infinite alternate; }
+  @keyframes gw-slide { from { left: 1px; } to { left: calc(66% - 1px); } }
+  #status { min-height: 16px; max-width: 100%; text-align: center; text-shadow: 0 1px 2px rgba(0, 20, 60, .8); overflow-wrap: anywhere; }
+  .gw-tip { min-height: 30px; max-width: 100%; text-align: center; color: rgba(255, 255, 255, .78); font-weight: normal; font-size: 12px; line-height: 15px; text-shadow: 0 1px 1px rgba(0, 20, 60, .6); transition: opacity .4s; }
+  .gw-tip b { color: #fff; }
+  @media (prefers-reduced-motion: reduce) { #splash::before { animation: none; opacity: 0; } .gw-bar::after { animation-duration: 4s; } }
 </style>
 <canvas id="screen" width="1280" height="720"></canvas>
-<div id="splash" class="xp-desktop" role="status" aria-live="polite">
-  <div class="xp-icons" aria-hidden="true"><div class="xp-icon sel"><img src="/web/brand/icon-64.png" alt=""><span>Garry's Mod</span></div></div>
-  <div class="xp-win">
-    <div class="xp-title"><img src="/web/brand/icon-32.png" alt=""><span>Garry's Web</span><i class="xp-tb min"></i><i class="xp-tb max"></i><i class="xp-tb close"></i></div>
-    <div class="xp-body">
-      <img class="xp-logo" src="/web/brand/logo@2x.png" alt="Garry's Web" width="288" height="128">
-      <div id="status" class="xp-status">Starting...</div>
-      <div class="xp-progress marquee" aria-hidden="true"><i></i></div>
-      <div class="gw-tip" data-tip></div>
-    </div>
+<div id="splash" role="status" aria-live="polite">
+  <div class="gw-splash">
+    <img src="/web/brand/logo@2x.png" alt="Garry's Web" width="288" height="128">
+    <div class="gw-bar" aria-hidden="true"></div>
+    <div id="status">Starting...</div>
+    <div class="gw-tip" data-tip></div>
   </div>
-  <div class="xp-taskbar" aria-hidden="true"><div class="xp-start"><img src="/web/brand/icon-32.png" alt="">start</div><div class="xp-task"><img src="/web/brand/icon-32.png" alt="">Garry's Web</div><div class="xp-tray"><time data-clock></time></div></div>
 </div>
 <div id="launcher" hidden></div>
 <script>
-  // Tips under the bar while it loads, and the taskbar clock.
+  // Tips under the bar while it loads.
   (() => {
-    const tips = ['Tip: press <b>Shift+Tab</b> in game to open chat without leaving it.', 'Tip: signed in, your saves, dupes and settings follow you to any browser.',
-      'Tip: share a save as a link from <b>Saves</b>; anyone can play it straight away.', 'Tip: the first start downloads the game; later starts are much faster.',
-      'Tip: in a voice channel, <b>Ctrl+Shift+M</b> mutes you and <b>Ctrl+Shift+D</b> deafens you.', 'Tip: type <b>@</b> in chat to mention someone.'];
+    const tips = ['Press <b>Shift+Tab</b> in game to open chat without leaving it.', 'Signed in, your saves, dupes and settings follow you to any browser.',
+      'Share a save as a link from <b>Saves</b>; anyone can play it straight away.', 'The first start downloads the game; later starts are much faster.',
+      'In a voice channel, <b>Ctrl+Shift+M</b> mutes you and <b>Ctrl+Shift+D</b> deafens you.', 'Type <b>@</b> in chat to mention someone.',
+      'Friends hosting a game have a <b>Join game</b> button on their profile.'];
     const el = document.querySelector('[data-tip]');
     let i = Math.floor(Math.random() * tips.length);
     const next = () => { el.style.opacity = 0; setTimeout(() => { el.innerHTML = tips[i++ % tips.length]; el.style.opacity = 1; }, 400); };
     el.innerHTML = tips[i++ % tips.length];
-    const clock = () => { for (const c of document.querySelectorAll('[data-clock]')) c.textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
-    clock(); setInterval(clock, 15000);
     const t = setInterval(() => { if (document.body.classList.contains('launcher-ready')) clearInterval(t); else next(); }, 5000);
   })();
 </script>

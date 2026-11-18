@@ -882,35 +882,40 @@ function darkLoading() {
 }
 
 function loading(sel, backdrop) {
+  // Started straight into the game (Continue, a restart, a link): the menu's pictures were never shown, so show one now.
+  if (!backdrop.current) backgroundList().then(async (l) => { backdrop.stopped = false; await backdrop.start(l); backdrop.freeze(); }).catch(() => {});
   backdrop.freeze();
   const ed = sel.version ? { ...EDITIONS[sel.edition], name: sel.version.name, short: `${EDITIONS[sel.edition].short} + ${sel.version.addons.length} addons` } : EDITIONS[sel.edition], qual = Object.values(QUALITY).find((q) => q.scale === sel.scale) ?? QUALITY.std;
-  // An early-2000s desktop with the game starting in a window (the .xp-* styles are in web/index.html, shared with the splash).
+  // The menu's background stays (dimmed), with a Derma window over it: the edition, what is happening, a DProgress bar, the
+  // four stages ticked off as they finish, the log, and Cancel.
+  dermaReady();
   const el = document.createElement('div');
-  el.className = 'loadscreen xp-desktop';
-  el.innerHTML = `<div class="xp-icons" aria-hidden="true"><div class="xp-icon sel"><img src="${brand('icon-64.png')}" alt=""><span>${esc(ed.name)}</span></div>
-      <div class="xp-icon pix"><img src="${icon('folder')}" alt=""><span>Saves</span></div><div class="xp-icon pix"><img src="${icon('world')}" alt=""><span>Workshop</span></div></div>
-    <div class="xp-win" role="dialog" aria-label="Starting ${esc(ed.name)}">
-      <div class="xp-title"><img src="${brand('icon-32.png')}" alt=""><span>${esc(ed.name)}</span><i class="xp-tb min"></i><i class="xp-tb max"></i><button type="button" class="xp-tb close" data-cancel aria-label="Cancel"></button></div>
-      <div class="xp-body">
-        <div class="xp-row"><img src="${game(ed.picture)}" alt=""><div class="xp-lines"><b data-map>Starting ${esc(ed.name)}...</b><span data-detail>${esc(ed.short)} · ${esc(qual.label)} graphics</span></div></div>
-        <div class="xp-progress" data-prog role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Loading"><i data-bar></i></div>
-        <div class="xp-status" data-text></div>
-        <div class="xp-details" data-spam aria-hidden="true"></div>
-        <div class="xp-buttons"><button type="button" class="xp-btn" data-cancel>Cancel</button></div>
+  el.className = 'loadscreen gwl-load dk';
+  el.innerHTML = `<div class="gwl-loadveil"></div>
+    <div class="dk-window gwl-loadwin" role="dialog" aria-label="Starting ${esc(ed.name)}">
+      <div class="dk-title"><img src="${brand('icon-32.png')}" alt="">${esc(ed.name)}<span class="dk-tinfo" data-time></span><button type="button" class="dk-wbtn close" data-cancel data-tip="Cancel" aria-label="Cancel"></button></div>
+      <div class="dk-panel gwl-loadbody">
+        <div class="gwl-loadhead"><span class="pic" style="background-image:url('${game(ed.picture)}')"></span>
+          <div><b data-map>Starting ${esc(ed.name)}...</b><span data-detail>${esc(ed.short)} · ${esc(qual.label)} graphics</span></div><b class="pct" data-pct>0%</b></div>
+        <div class="dk-bar" data-prog role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Loading"><div data-bar></div></div>
+        <ol class="gwl-steps" data-steps>${STAGES.map((t, i) => `<li data-step="${i}"><img class="si" alt="" src="${icon('bullet_white')}"><span>${esc(t)}</span></li>`).join('')}</ol>
+        <div class="gwl-loadlog" data-spam aria-hidden="true"></div>
+        <div class="gwl-loadfoot"><span class="dk-say" data-text></span><button type="button" class="dk-btn" data-cancel><img class="si" alt="" src="${icon('cross')}">Cancel</button></div>
       </div>
-    </div>
-    <div class="xp-taskbar" aria-hidden="true"><div class="xp-start"><img src="${brand('icon-32.png')}" alt="">start</div><div class="xp-task"><img src="${brand('icon-32.png')}" alt="">${esc(ed.name)}</div>
-      <div class="xp-tray"><img class="si" src="${icon('sound')}" alt=""><time data-clock>${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div></div>`;
+    </div>`;
   root.append(el);
   for (const b of el.querySelectorAll('[data-cancel]')) b.onclick = () => location.assign(location.pathname + '?launcher=1');
+  const pct = el.querySelector('[data-pct]'), timeEl = el.querySelector('[data-time]'), steps = [...el.querySelectorAll('[data-step]')];
+  const tickSteps = (cur, fin) => steps.forEach((li, i) => { const st = fin || i < cur ? 'done' : i === cur ? 'now' : ''; if (li.dataset.state !== st) { li.dataset.state = st; li.querySelector('img').src = icon(st === 'done' ? 'tick' : st === 'now' ? 'bullet_go' : 'bullet_white'); } });
   const $ = (q) => el.querySelector(q), bar = $('[data-bar]'), text = $('[data-text]'), mapEl = $('[data-map]'), detail = $('[data-detail]'), spam = $('[data-spam]'), prog = $('[data-prog]');
   let value = 0, step = 0, failed = false, finished = false, last = '';
   const t0 = performance.now(), elapsed = () => fmtTime((performance.now() - t0) / 1000);
   const show = () => {
     const v = Math.min(100, value);
     bar.style.width = `${Math.max(0.2, v)}%`; prog.setAttribute('aria-valuenow', String(Math.floor(v)));
-    text.textContent = failed ? `Stopped after ${elapsed()}` : finished ? 'Ready' : `${STAGES[step]}... ${Math.floor(v)}% · ${elapsed()}`;
-    if (!failed) mapEl.textContent = finished ? 'Ready' : `${STAGES[step]}...`;
+    text.textContent = failed ? `Stopped after ${elapsed()}` : finished ? 'Ready' : `${STAGES[step]}...`;
+    pct.textContent = `${Math.floor(v)}%`; timeEl.textContent = elapsed();
+    if (!failed) { mapEl.textContent = finished ? 'Ready' : `${STAGES[step]}...`; tickSteps(step, finished); }
   };
   const log = (line) => {
     if (line === last) return;
@@ -926,14 +931,14 @@ function loading(sel, backdrop) {
   }, 500);
   const fail = (msg) => {
     if (failed) return;
-    failed = true; el.classList.add('failed'); prog.classList.add('bad'); show();
+    failed = true; el.classList.add('failed'); show();
     mapEl.textContent = 'Could not start';
-    // A message box over the loading window, as the era's error dialogs did.
+    // The error in a Derma message box over the loading window.
     const box = document.createElement('div');
-    box.className = 'xp-win xp-error'; box.setAttribute('role', 'alertdialog');
-    box.innerHTML = `<div class="xp-title"><img src="${brand('icon-32.png')}" alt=""><span>${esc(ed.name)}</span><button type="button" class="xp-tb close" data-menu aria-label="Close"></button></div>
-      <div class="xp-body"><div class="xp-msg"><span class="xp-erricon" aria-hidden="true"></span><div><b>Couldn't start the game.</b><p style="margin:4px 0 0">${esc(advice(msg))}</p><pre>${esc(msg)}</pre></div></div>
-      <div class="xp-buttons"><button type="button" class="xp-btn" data-reload>Reload</button><button type="button" class="xp-btn" data-menu>Back to Main Menu</button><button type="button" class="xp-btn" data-copy>Copy details</button></div></div>`;
+    box.className = 'dk-window gwl-loaderr pop'; box.setAttribute('role', 'alertdialog');
+    box.innerHTML = `<div class="dk-title"><img src="${icon('error')}" alt="">Couldn't start the game<span class="dk-tinfo"></span><button type="button" class="dk-wbtn close" data-menu aria-label="Close"></button></div>
+      <div class="dk-panel"><p>${esc(advice(msg))}</p><pre>${esc(msg)}</pre>
+      <div class="gwl-loadfoot"><button type="button" class="dk-btn blue" data-reload><img class="si" alt="" src="${icon('arrow_refresh')}">Reload</button><button type="button" class="dk-btn" data-menu>Back to Main Menu</button><button type="button" class="dk-btn" data-copy><img class="si" alt="" src="${icon('page_copy')}">Copy details</button></div></div>`;
     el.append(box);
     box.querySelector('[data-reload]').onclick = () => location.reload();
     for (const b of box.querySelectorAll('[data-menu]')) b.onclick = () => location.assign(location.pathname + '?launcher=1');

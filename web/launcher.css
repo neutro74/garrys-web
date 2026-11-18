@@ -318,8 +318,34 @@ html:not(.dk-ready) .gw-toast { background: #fff5af; border: 1px solid #000; }
 #launcher .am-text textarea { width: 100%; box-sizing: border-box; resize: vertical; font: 12px monospace; }
 #launcher .am .bad { color: #c22; }
 
-/* Game loading screen (web/launcher.js loading()): the .xp-* desktop and window come from web/index.html; the error box
-   opens a little lower right of the loading window, over it. */
-#launcher .loadscreen.xp-desktop { position: absolute; }
-#launcher .xp-win.xp-error { top: 54%; left: 53%; width: min(470px, calc(100vw - 24px)); z-index: 2; }
-#launcher .xp-tray .si { width: 16px; height: 16px; image-rendering: pixelated; }
+/* Game loading screen (web/launcher.js loading()): the menu's background, dimmed, and a Derma window with the progress. */
+#launcher .gwl-load { display: grid; place-items: center; padding: 40px 16px 16px; color: var(--dk-text, #222); }
+#launcher .gwl-loadveil { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 45%, rgba(0, 0, 0, .25), rgba(0, 0, 0, .65)); }
+#launcher .gwl-loadwin { width: min(520px, 100%); animation: gwl-loadin .35s cubic-bezier(.2, .9, .3, 1.1) both; }
+@keyframes gwl-loadin { from { opacity: 0; transform: translateY(14px) scale(.97); } }
+#launcher .gwl-loadwin .dk-tinfo { font-variant-numeric: tabular-nums; }
+#launcher .gwl-loadbody { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+#launcher .gwl-loadhead { display: flex; align-items: center; gap: 10px; min-width: 0; }
+#launcher .gwl-loadhead .pic { flex: none; width: 64px; height: 64px; border-radius: 3px; background: #555 center / cover no-repeat; box-shadow: 0 1px 3px rgba(0, 0, 0, .4); }
+#launcher .gwl-loadhead > div { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+#launcher .gwl-loadhead b { font: bold 15px var(--dk-large, Helvetica, Arial, sans-serif); }
+#launcher .gwl-loadhead span { color: var(--dk-mid, #666); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#launcher .gwl-loadhead .pct { flex: none; font-size: 22px; color: #1a86e0; font-variant-numeric: tabular-nums; }
+#launcher .gwl-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 0; padding: 0; list-style: none; }
+#launcher .gwl-steps li { display: flex; align-items: center; gap: 4px; min-width: 0; color: #888; font-size: 11px; transition: color .3s; }
+#launcher .gwl-steps li span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#launcher .gwl-steps li[data-state="now"] { color: var(--dk-text, #222); font-weight: bold; }
+#launcher .gwl-steps li[data-state="done"] { color: #3a8a2a; }
+#launcher .gwl-steps .si { width: 16px; height: 16px; image-rendering: pixelated; }
+#launcher .gwl-loadlog { height: 84px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; padding: 3px 5px; border: 1px solid #b4b4b4; border-radius: 2px; background: #fff; color: #777; font: 11px Consolas, "DejaVu Sans Mono", monospace; }
+#launcher .gwl-loadlog div { flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#launcher .gwl-loadlog div:last-child { color: #222; }
+#launcher .gwl-loadfoot { display: flex; align-items: center; justify-content: flex-end; gap: 4px; flex-wrap: wrap; }
+#launcher .gwl-loadfoot .dk-say { margin-right: auto; color: var(--dk-mid, #666); }
+#launcher .gwl-loadfoot .dk-btn { display: inline-flex; align-items: center; gap: 4px; }
+#launcher .gwl-load.failed .dk-bar > div { filter: hue-rotate(160deg) saturate(1.5); }
+#launcher .gwl-loaderr { position: absolute; width: min(480px, calc(100% - 32px)); z-index: 2; }
+#launcher .gwl-loaderr .dk-panel { display: flex; flex-direction: column; gap: 6px; padding: 8px; color: var(--dk-text, #222); }
+#launcher .gwl-loaderr p { margin: 0; white-space: normal; }
+#launcher .gwl-loaderr pre { margin: 0; max-height: 120px; overflow: auto; padding: 4px 6px; border: 1px solid #b4b4b4; background: #fff; color: #a22; font: 11px Consolas, monospace; white-space: pre-wrap; }
+@media (prefers-reduced-motion: reduce) { #launcher .gwl-loadwin { animation: none; } }

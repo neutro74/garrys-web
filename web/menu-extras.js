@@ -518,8 +518,17 @@ async function serverBrowser() {
     el.textContent = text;
   };
   window.__gwJoin = async (address) => {
-    const id = byFake.get(address), started = Date.now();
+    const id = byFake.get(address);
     if (!id) { message('That game is no longer listed. Refresh the list and try again.', "Couldn't join"); return; }
+    return joinLobby(id);
+  };
+  // A friend's game, by its id (the Join button in chat). Just after the game started the list may still be coming in.
+  window.__gwJoinLobby = async (id) => {
+    for (let i = 0; i < 30 && !(await lobbies().catch(() => [])).some((l) => l.id === id); i++) await new Promise((r) => setTimeout(r, 500));
+    return joinLobby(id);
+  };
+  const joinLobby = async (id) => {
+    const started = Date.now();
     const name = (await lobbies().catch(() => [])).find((l) => l.id === id)?.name ?? 'the game';
     notice(`Joining ${clean(name)}...`);
     const fail = (text) => { notice(''); message(text, "Couldn't join"); };
@@ -561,6 +570,8 @@ function pendingSave() {
   if (askedSave || !window.lua?.Run) return;
   askedSave = true;
   host('pending-save').then((f) => { if (f) setTimeout(() => lua(`RunConsoleCommand("gm_load", "${f.replace(/["\\]/g, '')}")`), 1500); }).catch(() => {});
+  // A friend's game picked in the launcher's chat (Join): joined once the menu is up.
+  host('pending-join').then((id) => { if (id) setTimeout(() => window.__gwJoinLobby?.(id), 1000); }).catch(() => {});
 }
 const done = new WeakSet();
 function scan() {

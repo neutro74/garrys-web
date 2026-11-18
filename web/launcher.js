@@ -775,7 +775,9 @@ function menu(ext, backdrop, opts = {}) {
       chat = mountChat(chatEl, { hub, mode: 'launcher',
         onNotify: (n) => { if (tab !== 'chat' && tab !== 'friends') toast(n); badges(); },
         onEditProfile: () => show('profile'),
-        onOpenSave: (code) => openShared(code) });
+        onOpenSave: (code) => openShared(code),
+        // A friend's game: start in its edition and join it once the game's menu is up (web/menu-extras.js pending-join).
+        onJoinGame: (g) => play(g.edition === 'extended' && ext ? 'extended' : 'base', null, null, g.id) });
       chat.visible(false);
     }
     const hubOffs = [hub.on('welcome', (m) => showOnline(m.online)), hub.on('friends', () => { drawFriends(); badges(); }), hub.on('presence', drawFriends), hub.on('presence-list', drawFriends),
@@ -806,11 +808,11 @@ function menu(ext, backdrop, opts = {}) {
       toasts.remove(); root.querySelector('.gwl-about')?.remove();
     };
     // save: 'saves/x.gms' to load as soon as the game's menu is up (Continue, Play on a save).
-    const play = (id, gv = null, save = null) => {
+    const play = (id, gv = null, save = null, join = null) => {
       if (went) return;
       teardown({ keepHub: true }); edition = id; if (!gv) store.set('edition', id);
       win.classList.add('leave');
-      setTimeout(() => { win.remove(); resolve({ edition, scale: QUALITY[quality].scale, version: gv, save }); }, reducedMotion ? 0 : 300);
+      setTimeout(() => { win.remove(); resolve({ edition, scale: QUALITY[quality].scale, version: gv, save, join }); }, reducedMotion ? 0 : 300);
     };
     // Signed in or out: the account's settings now apply, so the window is built again for it (no page reload).
     const relaunch = (open) => {
@@ -882,23 +884,33 @@ function darkLoading() {
 function loading(sel, backdrop) {
   backdrop.freeze();
   const ed = sel.version ? { ...EDITIONS[sel.edition], name: sel.version.name, short: `${EDITIONS[sel.edition].short} + ${sel.version.addons.length} addons` } : EDITIONS[sel.edition], qual = Object.values(QUALITY).find((q) => q.scale === sel.scale) ?? QUALITY.std;
+  // An early-2000s desktop with the game starting in a window (the .xp-* styles are in web/index.html, shared with the splash).
   const el = document.createElement('div');
-  el.className = `loadscreen${darkLoading() ? ' dark' : ''}`;
-  el.innerHTML = `<div id="background"></div>
-    <div id="container"><img id="logo" src="${brand('icon-256.png')}" alt="" width="149" height="149"><div><div class="walk">:v</div></div></div>
-    <div class="server_info"><div class="mapimg" style="background-image:url('${game(ed.picture)}')"></div>
-      <div class="text"><div>${esc(ed.name)}</div><div data-map>Loading</div><div class="small" data-detail>${esc(ed.short)} · ${esc(qual.label)} graphics</div></div></div>
-    <div class="spambox" data-spam aria-hidden="true"></div>
-    <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Loading"><div class="progress_text" data-text></div><div class="progressbar"><div class="inner" data-bar></div></div></div>`;
+  el.className = 'loadscreen xp-desktop';
+  el.innerHTML = `<div class="xp-icons" aria-hidden="true"><div class="xp-icon sel"><img src="${brand('icon-64.png')}" alt=""><span>${esc(ed.name)}</span></div>
+      <div class="xp-icon pix"><img src="${icon('folder')}" alt=""><span>Saves</span></div><div class="xp-icon pix"><img src="${icon('world')}" alt=""><span>Workshop</span></div></div>
+    <div class="xp-win" role="dialog" aria-label="Starting ${esc(ed.name)}">
+      <div class="xp-title"><img src="${brand('icon-32.png')}" alt=""><span>${esc(ed.name)}</span><i class="xp-tb min"></i><i class="xp-tb max"></i><button type="button" class="xp-tb close" data-cancel aria-label="Cancel"></button></div>
+      <div class="xp-body">
+        <div class="xp-row"><img src="${game(ed.picture)}" alt=""><div class="xp-lines"><b data-map>Starting ${esc(ed.name)}...</b><span data-detail>${esc(ed.short)} · ${esc(qual.label)} graphics</span></div></div>
+        <div class="xp-progress" data-prog role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Loading"><i data-bar></i></div>
+        <div class="xp-status" data-text></div>
+        <div class="xp-details" data-spam aria-hidden="true"></div>
+        <div class="xp-buttons"><button type="button" class="xp-btn" data-cancel>Cancel</button></div>
+      </div>
+    </div>
+    <div class="xp-taskbar" aria-hidden="true"><div class="xp-start"><img src="${brand('icon-32.png')}" alt="">start</div><div class="xp-task"><img src="${brand('icon-32.png')}" alt="">${esc(ed.name)}</div>
+      <div class="xp-tray"><img class="si" src="${icon('sound')}" alt=""><time data-clock>${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div></div>`;
   root.append(el);
-  const $ = (q) => el.querySelector(q), bar = $('[data-bar]'), text = $('[data-text]'), mapEl = $('[data-map]'), detail = $('[data-detail]'), spam = $('[data-spam]'), prog = $('.progress');
+  for (const b of el.querySelectorAll('[data-cancel]')) b.onclick = () => location.assign(location.pathname + '?launcher=1');
+  const $ = (q) => el.querySelector(q), bar = $('[data-bar]'), text = $('[data-text]'), mapEl = $('[data-map]'), detail = $('[data-detail]'), spam = $('[data-spam]'), prog = $('[data-prog]');
   let value = 0, step = 0, failed = false, finished = false, last = '';
   const t0 = performance.now(), elapsed = () => fmtTime((performance.now() - t0) / 1000);
   const show = () => {
     const v = Math.min(100, value);
     bar.style.width = `${Math.max(0.2, v)}%`; prog.setAttribute('aria-valuenow', String(Math.floor(v)));
     text.textContent = failed ? `Stopped after ${elapsed()}` : finished ? 'Ready' : `${STAGES[step]}... ${Math.floor(v)}% · ${elapsed()}`;
-    if (!failed) mapEl.textContent = finished ? 'Ready' : STAGES[step];
+    if (!failed) mapEl.textContent = finished ? 'Ready' : `${STAGES[step]}...`;
   };
   const log = (line) => {
     if (line === last) return;
@@ -914,14 +926,17 @@ function loading(sel, backdrop) {
   }, 500);
   const fail = (msg) => {
     if (failed) return;
-    failed = true; el.classList.add('failed'); show();
+    failed = true; el.classList.add('failed'); prog.classList.add('bad'); show();
+    mapEl.textContent = 'Could not start';
+    // A message box over the loading window, as the era's error dialogs did.
     const box = document.createElement('div');
-    box.className = 'whiterounded'; box.setAttribute('role', 'alert');
-    box.innerHTML = `<h3>Couldn't start the game</h3><p>${esc(advice(msg))}</p><pre>${esc(msg)}</pre>
-      <div class="row"><button class="btn-primary" data-reload>Reload</button><button class="btn" data-menu>Back to Main Menu</button><button class="btn" data-copy>Copy details</button></div>`;
+    box.className = 'xp-win xp-error'; box.setAttribute('role', 'alertdialog');
+    box.innerHTML = `<div class="xp-title"><img src="${brand('icon-32.png')}" alt=""><span>${esc(ed.name)}</span><button type="button" class="xp-tb close" data-menu aria-label="Close"></button></div>
+      <div class="xp-body"><div class="xp-msg"><span class="xp-erricon" aria-hidden="true"></span><div><b>Couldn't start the game.</b><p style="margin:4px 0 0">${esc(advice(msg))}</p><pre>${esc(msg)}</pre></div></div>
+      <div class="xp-buttons"><button type="button" class="xp-btn" data-reload>Reload</button><button type="button" class="xp-btn" data-menu>Back to Main Menu</button><button type="button" class="xp-btn" data-copy>Copy details</button></div></div>`;
     el.append(box);
     box.querySelector('[data-reload]').onclick = () => location.reload();
-    box.querySelector('[data-menu]').onclick = () => location.assign(location.pathname + '?launcher=1');
+    for (const b of box.querySelectorAll('[data-menu]')) b.onclick = () => location.assign(location.pathname + '?launcher=1');
     box.querySelector('[data-copy]').onclick = async (ev) => {
       try { await navigator.clipboard.writeText(`${msg}\n\n${navigator.userAgent}`); ev.target.textContent = 'Copied'; } catch { ev.target.textContent = 'Copy failed'; }
     };
@@ -1012,6 +1027,7 @@ async function start() {
   if (!synced) { statusEl.textContent = 'Syncing your saves...'; await Promise.race([files, new Promise((r) => setTimeout(r, 30000))]); statusEl.textContent = 'Starting...'; }
   stopWrites();
   if (sel.save) try { sessionStorage.setItem('garrys-wasm.load-save', sel.save); } catch { /* storage blocked */ }
+  if (sel.join) try { sessionStorage.setItem('garrys-wasm.join-lobby', sel.join); } catch { /* storage blocked */ }
   // The addons this launch mounts (a version's, or the player's own) that this browser does not have yet are fetched first.
   const own = sel.version ?? { addons: launchAddons(null).map((name) => ({ name, ...libraryMeta()[name] })) };
   if (own.addons.length) await fetchVersionAddons(own).catch((e) => console.warn('[versions]', e.message));

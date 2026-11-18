@@ -112,6 +112,15 @@ await B.eval(`[...document.querySelectorAll('.gwc-tabs button')].find((b) => b.t
 await until(B, `[...document.querySelectorAll('.gwc-frow')].some((r) => r.textContent.includes('Ann the Builder'))`, 'ben sees Ann online in friends');
 await shot(B, 'friends');
 
+// Join: Ann hosts a game; on Ben's side her card offers Join (enabled, naming the game). Not clicked: that starts the game.
+await A.eval(`import('/web/hub.js').then((m) => { m.sharedHub().host({ name: 'Ann builds', edition: 'base', map: 'gm_construct', max: 4, players: 1 }); return true; })`);
+await until(B, `(async () => (await import('/web/hub.js')).sharedHub().presence?.get('${ann}')?.game?.name === 'Ann builds')()`, 'ben sees ann hosting');
+await B.eval(`[...document.querySelectorAll('.gwc-frow')].find((r) => r.textContent.includes('Ann the Builder')).querySelector('.gwc-person').click()`);
+await until(B, `(() => { const j = document.querySelector('.gwc-pop .gwc-join'); return j && !j.disabled && /Ann builds/.test(j.dataset.tip) && j.nextElementSibling?.textContent === 'Remove friend'; })()`, 'profile card: Join game above Remove friend, enabled');
+await shot(B, 'join');
+await B.eval(`document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`);
+await A.eval(`import('/web/hub.js').then((m) => { m.sharedHub().unhost(); return true; })`);
+
 // Private message: Ben messages Ann from the friends list; Ann gets it in Direct messages.
 await B.eval(`[...document.querySelectorAll('.gwc-frow .dk-btn')].find((b) => b.textContent === 'Message').click()`);
 await until(B, `!document.querySelector('[data-text]').disabled`, 'dm composer');

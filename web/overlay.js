@@ -11,7 +11,7 @@ import { icon } from './derma.js';
 const voiceKey = (e) => (e.type === 'keydown' && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey ? { KeyM: 'mute', KeyD: 'deafen' }[e.code] ?? null : null);
 const isToggle = (e) => e.type === 'keydown' && e.shiftKey && (e.code === 'Tab' || e.key === 'Tab') && !e.ctrlKey && !e.altKey && !e.metaKey;
 
-export function createOverlay({ input, activity, onOpenSave, onEditProfile }) {
+export function createOverlay({ input, activity, onOpenSave, onEditProfile, onJoinGame }) {
   const hub = sharedHub();
   if (!hub.url) return null;
   chatStyles();
@@ -30,7 +30,7 @@ export function createOverlay({ input, activity, onOpenSave, onEditProfile }) {
   const vc = voiceClient(hub);
   let open = false;
   const chat = mountChat(app, {
-    hub, mode: 'overlay', onOpenSave,
+    hub, mode: 'overlay', onOpenSave, onJoinGame,
     onEditProfile: onEditProfile ?? (() => toast({ title: 'Profile', body: 'Edit your profile and sign in from the launcher (Quit → Profile).' })),
     onNotify: (n) => { if (!open) toast(n); updateBadge(); },
   });

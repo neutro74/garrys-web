@@ -160,6 +160,15 @@ try {
     onOpenSave: async (code, s) => {
       try { const file = await panels.host('save-import-shared', { code }); overlay?.toast({ title: 'Save added', body: `“${s?.name ?? file}” is in your Saves (main menu → Saves).` }); }
       catch (e) { overlay?.toast({ title: 'Could not add the save', body: e.message }); }
+    },
+    // A friend's game (Join in chat): the game's menu joins it (web/menu-extras.js), leaving the current map if any.
+    onJoinGame: (g) => {
+      if (g.edition !== edition) { overlay?.toast({ title: 'Different edition', body: `${g.name} runs ${g.edition === 'extended' ? 'Garry\'s Mod: Extended' : 'Garry\'s Mod'}. Quit to the launcher and press Join there.` }); return; }
+      for (const p of panels.panels?.values?.() ?? []) {
+        let w = null; try { w = p.frame?.contentWindow; } catch { /* gone */ }
+        if (w?.__gwJoinLobby) { overlay?.toggle(false); w.__gwJoinLobby(g.id); return; }
+      }
+      overlay?.toast({ title: 'Could not join', body: 'Open the main menu (Esc) and try again.' });
     } });
 } catch (e) { console.warn('[overlay]', e); }
 window.__overlay = overlay;

@@ -97,7 +97,7 @@ export function chatStyles() {
   document.head.append(l);
 }
 
-export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNotify = () => {}, onEditProfile = () => {}, onOpenSave = null } = {}) {
+export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNotify = () => {}, onEditProfile = () => {}, onOpenSave = null, onJoinGame = null } = {}) {
   chatStyles();
   root.classList.add('dk', 'gwc', 'gwc-' + mode);
   root.innerHTML = `
@@ -492,7 +492,9 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
       const f = hub.friends ?? {}, row = h('div', 'gwc-cardbtns');
       const btn = (label, fn, cls = 'dk-btn') => { const b = h('button', cls, label); b.type = 'button'; b.onclick = () => { fn(); closePop(); }; row.append(b); };
       btn('Message', () => open({ kind: 'dm', with: u }), 'dk-btn blue');
-      if (f.friends?.some((x) => x.user === u)) btn('Remove friend', async () => (await dkConfirm(`Remove ${u} from your friends?`, { title: 'Remove friend', ok: 'Remove', danger: true })) && hub.friend('friend-remove', u));
+      const isFriend = f.friends?.some((x) => x.user === u);
+      if (isFriend && onJoinGame) row.append(joinButton(u, closePop));
+      if (isFriend) btn('Remove friend', async () => (await dkConfirm(`Remove ${u} from your friends?`, { title: 'Remove friend', ok: 'Remove', danger: true })) && hub.friend('friend-remove', u));
       else if (f.incoming?.includes(u)) btn('Accept friend request', () => hub.friend('friend-accept', u));
       else if (f.outgoing?.includes(u)) btn('Request sent', () => hub.friend('friend-remove', u));
       else btn('Add friend', () => hub.friend('friend-add', u));
@@ -503,6 +505,16 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
     }
     card.append(body);
     return card;
+  }
+  // Join a friend's game (one they host, listed on the hub): the launcher starts the game and joins; in game it joins now.
+  function joinButton(u, after = () => {}) {
+    const g = presence(u)?.game, b = h('button', 'dk-btn blue gwc-join', si('controller'), 'Join game');
+    b.type = 'button';
+    const full = g && g.max && g.players >= g.max;
+    b.disabled = !g || full || g.locked;
+    b.dataset.tip = !g ? `${displayName(cachedProfile(u), u)} is not hosting a game right now` : full ? `${g.name} is full (${g.players}/${g.max})` : g.locked ? `${g.name} is password protected` : `${g.name}${g.map ? ' · ' + g.map : ''} · ${g.players}/${g.max} players · ${g.edition === 'extended' ? 'Extended' : 'Garry\'s Mod'}`;
+    b.onclick = () => { if (!b.disabled) { after(); onJoinGame(g, u); } };
+    return b;
   }
   function profileCard(u, anchor, name) { openPop(profilePanel(u, name), anchor, 'card'); }
   function drawFriends() {
@@ -527,7 +539,7 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
       wrap.append(form); logEl.replaceChildren(wrap); setTimeout(() => form.u.focus(), 0); return;
     }
     let list = [];
-    if (tab === 'online') list = f.friends.filter((x) => presence(x.user).status !== 'offline').map((x) => row(x.user, ['Message', () => open({ kind: 'dm', with: x.user }), 'primary']));
+    if (tab === 'online') list = f.friends.filter((x) => presence(x.user).status !== 'offline').map((x) => { const r = row(x.user, ['Message', () => open({ kind: 'dm', with: x.user }), 'primary']); if (onJoinGame && presence(x.user).game) r.append(joinButton(x.user)); return r; });
     if (tab === 'all') list = f.friends.map((x) => row(x.user, ['Message', () => open({ kind: 'dm', with: x.user }), 'primary'], ['Remove', async () => (await dkConfirm(`Remove ${x.user} from your friends?`, { title: 'Remove friend', ok: 'Remove', danger: true })) && hub.friend('friend-remove', x.user)]));
     if (tab === 'pending') list = [...f.incoming.map((u) => row(u, ['Accept', () => hub.friend('friend-accept', u), 'primary'], ['Ignore', () => hub.friend('friend-remove', u)])),
       ...f.outgoing.map((u) => row(u, ['Cancel request', () => hub.friend('friend-remove', u)]))];

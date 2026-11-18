@@ -317,3 +317,9 @@ html:not(.dk-ready) .gw-toast { background: #fff5af; border: 1px solid #000; }
 #launcher .am-text { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--dk-mid); }
 #launcher .am-text textarea { width: 100%; box-sizing: border-box; resize: vertical; font: 12px monospace; }
 #launcher .am .bad { color: #c22; }
+
+/* Game loading screen (web/launcher.js loading()): the .xp-* desktop and window come from web/index.html; the error box
+   opens a little lower right of the loading window, over it. */
+#launcher .loadscreen.xp-desktop { position: absolute; }
+#launcher .xp-win.xp-error { top: 54%; left: 53%; width: min(470px, calc(100vw - 24px)); z-index: 2; }
+#launcher .xp-tray .si { width: 16px; height: 16px; image-rendering: pixelated; }

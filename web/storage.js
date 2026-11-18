@@ -63,6 +63,7 @@ export function menuHost(storage,p2p,{edition='base',startedOff='',lobby=null,se
    case 'save-import-shared':{const entries=await fetchShare(String(args.code));if(!entries.some(([p])=>p.endsWith('.gms')))throw Error('The share has no save in it');
     await storage.request('saves-import',{entries});const gms=entries.find(([p])=>p.endsWith('.gms'))[0];return gms.slice('/overlay/garrysmod/'.length);}
    // A save picked in the launcher (Continue, Play on a save): loaded once the main menu is up (web/menu-extras.js).
+   case 'pending-join':{let j=null;try{j=sessionStorage.getItem('garrys-wasm.join-lobby');sessionStorage.removeItem('garrys-wasm.join-lobby');}catch{}return /^[A-Za-z0-9_-]{4,16}$/.test(j??'')?j:null;}
    case 'pending-save':{let f=null;try{f=sessionStorage.getItem('garrys-wasm.load-save');sessionStorage.removeItem('garrys-wasm.load-save');}catch{}return /^saves\/[^/"\\]+\.gms$/i.test(f??'')?f:null;}
    case 'activity':onActivity({inGame:!!args.inGame,map:String(args.map??'').slice(0,48)});return true;
    case 'save-unshare':await removeShare(String(args.code));return true;

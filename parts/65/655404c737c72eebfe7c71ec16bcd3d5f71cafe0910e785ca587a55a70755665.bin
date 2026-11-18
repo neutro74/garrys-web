@@ -1,0 +1,350 @@
+/* Launcher: the menu is one Derma window (web/derma.css, GMod's own skin) with tabs over the drifting menu backgrounds; the
+   loading screen follows garrysmod/html/loading.html + loading.css. Everything lives under #launcher; nothing here touches the
+   game canvas. */
+
+body { background: #000; }
+
+#launcher {
+  position: fixed; inset: 0; z-index: 10; overflow: hidden; background: #000; color: #fff;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 12px;
+  -webkit-font-smoothing: antialiased; user-select: none; transition: opacity .6s ease;
+}
+#launcher[hidden] { display: none; }
+#launcher.fade { opacity: 0; pointer-events: none; }
+#launcher *, #launcher *::before, #launcher *::after { box-sizing: border-box; }
+#launcher a { text-decoration: none; cursor: pointer; }
+:where(#launcher) button { font: inherit; }
+
+/* ---- Backdrop: background.lua — the image turns and grows slowly, the outgoing one fades over about a second. ---- */
+#launcher .backdrop { position: absolute; inset: 0; overflow: hidden; background: #000; }
+#launcher .backdrop .slide { position: absolute; inset: -8%; background: center / cover no-repeat; opacity: 0; transition: opacity 1.1s linear; will-change: transform, opacity; }
+#launcher .backdrop .slide.on { opacity: 1; }
+#launcher .backdrop .slide.drift-a { animation: drift-a 24s linear forwards; }
+#launcher .backdrop .slide.drift-b { animation: drift-b 24s linear forwards; }
+@keyframes drift-a { from { transform: scale(1) rotate(-1deg); } to { transform: scale(1.1) rotate(1.2deg); } }
+@keyframes drift-b { from { transform: scale(1) rotate(1deg); } to { transform: scale(1.1) rotate(-1.2deg); } }
+
+
+/* ---- Loading screen (loading.html, loading.css) ---- */
+#launcher .loadscreen { position: absolute; inset: 0; color: #000; animation: fadein .5s ease both; }
+@keyframes fadein { from { opacity: 0; } }
+#launcher .loadscreen #background { position: absolute; inset: 0; background: url("../game/garrysmod/html/img/bg.png") 0 0 / 100% 100%; }
+#launcher .loadscreen.dark { color: #fff; }
+#launcher .loadscreen.dark #background { background-image: url("../game/garrysmod/html/img/bg_dark.png"); }
+#launcher .loadscreen #container { position: absolute; left: 50%; top: 45%; width: 300px; margin: -120px 0 0 -150px; text-align: center; }
+#launcher .loadscreen #logo { display: block; margin: 0 auto 1.25em; }
+#launcher .walk { display: inline-block; width: 24px; height: 24px; border: 2px solid #999; border-radius: 3px; background: #fe7; color: #999;
+  font: bold 16px/20px arial, sans-serif; text-align: center; animation: walk 10s linear infinite; }
+@keyframes walk { to { transform: rotate(360deg); } }
+#launcher .server_info { position: absolute; left: 0; top: 0; max-width: 100%; padding: 20px 180px 20px 20px; white-space: nowrap;
+  background-image: linear-gradient(90deg, rgba(0,0,0,.4) 0%, rgba(0,0,0,.03) 75%, rgba(0,0,0,0) 100%); }
+#launcher .server_info .mapimg { float: left; width: 128px; height: 128px; margin-right: 16px; background: #666 center / cover no-repeat; }
+#launcher .server_info .text { display: inline-block; vertical-align: top; max-width: calc(100vw - 200px); line-height: 42px; font-size: xx-large; }
+#launcher .server_info .text > div { overflow: hidden; text-overflow: ellipsis; }
+#launcher .server_info .text .small { font-size: 18px; line-height: 30px; opacity: .75; }
+/* #spambox: the column of file names the stock screen lists while downloading; here the boot steps. */
+#launcher .spambox { position: absolute; right: 12px; top: 12px; bottom: 60px; width: 380px; max-width: 45vw; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end;
+  text-align: right; font-size: 12px; letter-spacing: -.5px; color: rgba(0,0,0,.45); text-shadow: 0 0 3px #fff; -webkit-mask-image: linear-gradient(transparent, #000 40%); mask-image: linear-gradient(transparent, #000 40%); }
+#launcher .loadscreen.dark .spambox { color: rgba(255,255,255,.5); text-shadow: 0 0 3px #000; }
+#launcher .spambox div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#launcher .spambox div:last-child { color: rgba(0,0,0,.75); }
+#launcher .loadscreen.dark .spambox div:last-child { color: #fff; }
+/* Progress: the small rounded bar from loading.css with its grey caption to the left. */
+#launcher .progress { position: absolute; right: 20px; bottom: 20px; display: flex; align-items: center; gap: 10px; max-width: calc(100% - 40px); }
+#launcher .progress_text { min-width: 0; font: 12px helvetica, arial, sans-serif; letter-spacing: -.5px; color: rgba(0,0,0,.5); text-shadow: 0 0 3px #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
+#launcher .loadscreen.dark .progress_text { color: rgba(255,255,255,.6); text-shadow: 0 0 3px #000; }
+#launcher .progressbar { flex: none; width: 150px; padding: 1px; border-radius: 3px; background: rgba(0,0,0,.6); }
+#launcher .progressbar .inner { width: .2%; height: 11px; border-radius: 2px; background: rgb(0,240,0); transition: width .4s ease; }
+#launcher .loadscreen.failed .progressbar .inner { background: #f33; }
+#launcher .loadscreen.failed .walk { animation-play-state: paused; }
+
+/* A failure: the white rounded panel and blue buttons of the menu's pages (Menu.css .whiterounded, .btn-primary). */
+#launcher .whiterounded { position: absolute; left: 50%; top: calc(45% + 90px); transform: translateX(-50%); width: min(560px, calc(100% - 32px)); padding: 10px 15px 15px; border-radius: 4px; background: #fff; color: #333;
+  box-shadow: 0 0 10px 1px rgba(0,0,0,.4); user-select: text; font-size: 13px; }
+#launcher .whiterounded h3 { margin: 0 0 4px; font-size: 32px; font-weight: normal; color: #444; letter-spacing: -1px; }
+#launcher .whiterounded p { margin: 0 0 10px; color: #555; }
+#launcher .whiterounded pre { margin: 0 0 12px; max-height: 140px; overflow: auto; padding: 6px 8px; border: 1px solid #abadb3; border-radius: 3px; background: #f6f6f6; color: #a33;
+  font: 11px/1.4 Consolas, Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
+#launcher .whiterounded .row { display: flex; flex-wrap: wrap; gap: 6px; }
+#launcher .whiterounded :is(.btn-primary, .btn) { padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold; }
+#launcher .whiterounded .btn-primary { color: #fff; background: linear-gradient(#08c, #05c); border: 1px solid; border-color: #05c #05c #003580; text-shadow: 0 -1px 1px rgba(0,0,0,.25);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.2), 0 1px 2px rgba(0,0,0,.05); }
+#launcher .whiterounded .btn-primary:hover { background: linear-gradient(#2ae, #27e); }
+#launcher .whiterounded .btn { color: #333; background: linear-gradient(#fff, #e6e6e6); border: 1px solid #bbb; border-bottom-color: #a2a2a2; }
+#launcher .whiterounded .btn:hover { background: #e6e6e6; }
+
+@media (max-width: 760px) {
+  #launcher .server_info { padding-right: 20px; }
+  #launcher .server_info .mapimg { width: 64px; height: 64px; }
+  #launcher .server_info .text { font-size: 20px; line-height: 26px; max-width: calc(100vw - 120px); }
+  #launcher .server_info .text .small { font-size: 14px; line-height: 20px; }
+  #launcher .spambox { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #launcher .backdrop .slide { animation: none !important; transform: scale(1.04); }
+  #launcher .walk { animation: none; }
+}
+
+/* ---- Admin tab (web/admin.js), in Derma ---- */
+#launcher .adm { position: relative; display: flex; flex-direction: column; gap: 4px; height: 100%; min-height: 0; }
+#launcher .adm-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+#launcher .adm-who { margin-left: auto; font-size: 12px; }
+#launcher .adm-err { padding: 2px 8px; color: #000; border: 4px solid transparent; border-image: var(--dk-tooltip) 8 fill / 4px; }
+#launcher .adm-err[hidden] { display: none; }
+#launcher .adm-body { flex: 1; min-height: 0; overflow: auto; user-select: text; scrollbar-width: thin; }
+#launcher .adm.terminal .adm-body { padding: 0; overflow: hidden; display: flex; }
+#launcher .adm h3 { margin: 10px 0 4px; font: 700 16px var(--dk-large); color: #333; }
+#launcher .adm h3:first-child { margin-top: 0; }
+#launcher .adm h3 small { font: 12px Tahoma, Verdana, sans-serif; color: #888; }
+#launcher .adm table.grid { width: 100%; border-collapse: collapse; outline: 1px solid #ccc; background: #fff; }
+#launcher .adm table.grid th { height: 24px; padding: 0 6px; text-align: left; color: #333; font-weight: bold; border: 4px solid transparent; border-image: var(--dk-button) 8 fill / 4px; }
+#launcher .adm table.grid td { padding: 3px 6px; vertical-align: top; }
+#launcher .adm table.grid tr:nth-child(odd) td { background: rgba(0,0,0,.04); }
+#launcher .adm table.grid tr:hover td { background: var(--dk-hover); }
+#launcher .adm td.acts { text-align: right; white-space: nowrap; }
+#launcher .adm td.acts .btn { margin-left: 2px; }
+#launcher .adm .none { color: #999; font-style: italic; }
+#launcher .adm code { font-size: 11px; color: #555; background: #f2f2f2; padding: 0 3px; }
+#launcher .adm .acct { display: inline; margin: 0; padding: 0; outline: 0; background: none; color: #1a62d6; font-size: 12px; }
+#launcher .adm .badge { background: var(--dk-sel); color: #fff; padding: 0 4px; font-size: 10px; }
+#launcher .dk .btn.danger { color: #b00; font-weight: bold; }
+#launcher .dk .btn.on { border-image-source: var(--dk-button-d); }
+#launcher .adm form.inline { display: flex; gap: 4px; margin: 4px 0 8px; }
+#launcher .adm form.inline input { flex: 1; min-width: 0; }
+#launcher .adm .row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+#launcher .adm .rooms { margin-bottom: 6px; }
+#launcher .adm .msgs { line-height: 1.45; }
+#launcher .adm .msgs > div { padding: 2px 4px; border-bottom: 1px solid #eee; }
+#launcher .adm .msgs > div:hover { background: var(--dk-hover); }
+#launcher .adm .msgs time { color: #999; font-size: 11px; }
+#launcher .adm .btn.mini { height: 20px; padding: 0 3px; vertical-align: middle; }
+#launcher .adm .logbox { background: #1e1e1e; color: #ddd; font: 12px ui-monospace, "DejaVu Sans Mono", Consolas, monospace; padding: 8px; max-height: 360px; overflow: auto; white-space: pre-wrap; outline: 1px solid #000; }
+#launcher .adm .logbox .error { color: #f88; }
+#launcher .adm .logbox .warn { color: #fd6; }
+#launcher .adm .termwrap { flex: 1; display: flex; flex-direction: column; min-height: 0; background: #1e1e1e; }
+#launcher .adm .termbar { flex: none; display: flex; gap: 10px; align-items: center; padding: 3px 8px; color: #bbb; font-size: 12px; background: #2a2a2a; }
+#launcher .adm .term { flex: 1; min-height: 0; padding: 4px 0 0 6px; }
+#launcher .adm-emotes { display: flex; flex-wrap: wrap; gap: 6px; }
+#launcher .adm-emote { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; width: 110px; padding: 6px 4px; background: #fff; outline: 1px solid #ccc; text-align: center; }
+#launcher .adm-emote img:first-child { width: 40px; height: 40px; object-fit: contain; }
+#launcher .adm-emote.sticker img:first-child { width: 90px; height: 90px; }
+#launcher .adm-emote b { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+#launcher .adm-emote small { color: #888; font-size: 11px; }
+#launcher .adm-emote .btn.mini { position: absolute; right: 2px; top: 2px; }
+#launcher .adm-emote-form select { min-width: 0; }
+#launcher .adm-veil { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; background: rgba(0,0,0,.35); animation: dk-fade .15s ease-out; }
+#launcher .adm .dialog { width: min(440px, 100%); }
+#launcher .adm .dialog .dk-panel { display: grid; gap: 6px; }
+#launcher .adm .dialog .opts { display: grid; gap: 3px; }
+#launcher .adm .dialog label { display: flex; gap: 6px; align-items: center; }
+#launcher .adm .dialog label.off { color: #999; }
+#launcher .adm .dialog label input[data-reason] { flex: 1; }
+#launcher .adm .dialog .warn { color: #c60; font-weight: bold; }
+
+/* ---- The launcher window (web/derma.css draws the controls) ---- */
+#launcher .vignette { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, rgba(0,0,0,.2), rgba(0,0,0,.72)); }
+#launcher .gwl-window { position: absolute; left: 50%; top: 50%; translate: -50% -50%; width: min(1180px, calc(100vw - 32px)); height: min(740px, calc(100vh - 32px)); user-select: none; transition: opacity .3s ease, scale .3s ease; }
+#launcher .gwl-window.leave { opacity: 0; scale: .97; }
+#launcher .gwl-window .dk-tinfo [data-credit] { color: #c9ccd0; overflow: hidden; text-overflow: ellipsis; }
+#launcher .gwl-me { margin-left: auto; margin-bottom: 3px; max-width: 220px; }
+#launcher .gwl-me span { overflow: hidden; text-overflow: ellipsis; }
+#launcher .gwl-ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#launcher .gwl-hint, #launcher .dk .hint { color: var(--dk-mid); font-size: 12px; margin: 6px 0; }
+
+/* Play */
+#launcher .gwl-play { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 6px; height: 100%; min-height: 420px; }
+#launcher .gwl-left { display: flex; flex-direction: column; gap: 6px; min-width: 0; min-height: 0; }
+#launcher .gwl-right { display: flex; flex-direction: column; gap: 6px; min-width: 0; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #7d8185 transparent; }
+#launcher .gwl-right > * { flex: none; }
+#launcher .gwl-cont { display: grid; grid-template-columns: 220px 1fr; gap: 14px; align-items: center; animation: gwl-rise .45s var(--dk-ease) .15s both; }
+#launcher .gwl-cont[hidden] { display: none; }
+#launcher .gwl-cont .shot { aspect-ratio: 16 / 9; background: #345 center / cover; outline: 1px solid rgba(0,0,0,.35); }
+#launcher .gwl-cont .shot.none { background: linear-gradient(135deg, #3d8bd9, #1b4f86); }
+#launcher .gwl-label { color: var(--dk-mid); font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: .06em; }
+#launcher .gwl-cont h1 { font-size: 28px; font-weight: 900; line-height: 1.1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#launcher .gwl-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--dk-mid); margin: 3px 0 10px; }
+#launcher .gwl-meta > span { display: inline-flex; align-items: center; gap: 4px; }
+#launcher .gwl-cbtns { display: flex; flex-wrap: wrap; gap: 4px; }
+#launcher .gwl-warn p { margin: 2px 0; color: #a00; font-weight: bold; }
+#launcher .gwl-games { flex: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 6px; min-height: 160px; }
+#launcher .gwl-game { position: relative; display: block; min-height: 160px; overflow: hidden; outline: 1px solid rgba(0,0,0,.45); background: #333; animation: gwl-rise .45s var(--dk-ease) both; }
+#launcher .gwl-game:nth-child(1) { animation-delay: .22s; } #launcher .gwl-game:nth-child(2) { animation-delay: .3s; }
+#launcher .gwl-game .pic { position: absolute; inset: 0; background: center / cover; transition: scale .5s var(--dk-ease), filter .3s; }
+#launcher .gwl-game:hover .pic, #launcher .gwl-game:focus-visible .pic { scale: 1.05; filter: brightness(1.1); }
+#launcher .gwl-game .cap { position: absolute; left: 0; right: 0; bottom: 0; display: block; padding: 30px 10px 9px; background: linear-gradient(transparent, rgba(0,0,0,.82) 45%); color: #fff; text-align: left; }
+#launcher .gwl-game .cap > b { display: block; font: 900 21px var(--dk-large); text-shadow: 0 1px 2px #000; }
+#launcher .gwl-game .cap > span:not(.go) { display: block; color: #ddd; padding-right: 70px; }
+#launcher .gwl-game .go { position: absolute; right: 10px; bottom: 10px; opacity: 0; translate: 0 6px; transition: opacity .2s, translate .25s var(--dk-ease); }
+#launcher .gwl-game:hover .go, #launcher .gwl-game:focus-visible .go { opacity: 1; translate: 0 0; }
+#launcher .gwl-game::after { content: ""; position: absolute; inset: 0; border: 2px solid transparent; transition: border-color .2s; pointer-events: none; }
+#launcher .gwl-game:hover::after, #launcher .gwl-game:focus-visible::after { border-color: rgba(0, 210, 255, .85); }
+#launcher .gwl-game:focus-visible { outline: 2px solid #00d2ff; }
+#launcher .gwl-quality { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+#launcher .gwl-qbtns { display: flex; gap: 2px; }
+#launcher .gwl-quality small { color: var(--dk-on-grey-mid); }
+#launcher .gwl-right .dk-cat { animation: gwl-rise .45s var(--dk-ease) both; }
+#launcher .gwl-right .dk-cat:nth-child(2) { animation-delay: .08s; } #launcher .gwl-right .dk-cat:nth-child(3) { animation-delay: .16s; } #launcher .gwl-right .dk-cat:nth-child(n+4) { animation-delay: .24s; }
+#launcher .gwl-banner { display: block; outline: 1px solid rgba(0,0,0,.45); background: #0b2f66; overflow: hidden; animation: gwl-rise .45s var(--dk-ease) both; }
+#launcher .gwl-banner img { display: block; width: 100%; height: auto; aspect-ratio: 1600 / 520; transition: scale .5s var(--dk-ease), filter .3s; }
+#launcher .gwl-banner:hover img { scale: 1.04; filter: brightness(1.1); }
+#launcher .gwl-right .dk-p a { font-weight: bold; }
+#launcher .gwl-legal { font-size: 11px; }
+#launcher .gwl-about { position: absolute; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; background: rgba(0,0,0,.45); animation: dk-fade .15s ease-out; }
+#launcher .gwl-about .dk-window { width: min(520px, 100%); }
+#launcher .gwl-about .dk-panel { user-select: text; }
+#launcher .gwl-about .dk-panel p { margin: 8px 2px; }
+#launcher .gwl-about .gwl-legal { color: var(--dk-mid); font-size: 11px; }
+#launcher .gwl-about-banner { display: block; width: 100%; height: auto; aspect-ratio: 1600 / 520; outline: 1px solid rgba(0,0,0,.4); }
+@keyframes gwl-rise { from { opacity: 0; translate: 0 10px; } }
+
+/* Options */
+#launcher .gwl-options { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; align-items: start; }
+#launcher .gwl-col { display: flex; flex-direction: column; gap: 6px; }
+#launcher .gwl-col h2 { font-size: 18px; margin-bottom: 2px; }
+
+/* ---- The panels (Saves, Versions, Profile, Files, Controls) inside a tab ---- */
+#launcher .panel.gwl-panel { border: 8px solid transparent; border-image: var(--dk-panel-bright) 16 fill / 8px; color: var(--dk-text); user-select: text; }
+html:not(.dk-ready) #launcher .panel.gwl-panel { background: #fff; border: 1px solid #ccc; }
+#launcher .gwl-panel .panel-head { display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 6px; margin-bottom: 4px; color: #fff; font-weight: bold; text-shadow: 0 1px 0 rgba(0,0,0,.4);
+  border: 4px solid transparent; border-image: var(--dk-cat-head) 8 fill / 4px; }
+html:not(.dk-ready) #launcher .gwl-panel .panel-head { background: var(--dk-cat); }
+#launcher .gwl-panel .panel-head img { width: 16px; height: 16px; }
+#launcher .gwl-panel .panel-head small { font-weight: normal; color: #e8f6ff; }
+#launcher .gwl-panel .panel-head .x { display: none; }
+#launcher .gwl-panel .panel-body { padding: 2px 4px 4px; }
+#launcher .gwl-panel h4 { font: 700 16px var(--dk-large); }
+#launcher .gwl-panel .row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+#launcher table.facts { width: 100%; border-collapse: collapse; }
+#launcher table.facts td { padding: 3px 4px; border-bottom: 1px solid #e6e6e6; }
+#launcher table.facts td:first-child { color: var(--dk-mid); width: 45%; }
+#launcher table.facts small { color: #888; margin-left: 4px; }
+#launcher .gwl-panel .field { display: flex; align-items: center; gap: 10px; margin: 5px 0 2px; }
+#launcher .gwl-panel .field > span { width: 110px; flex: none; color: #444; font-weight: bold; }
+#launcher .gwl-panel .field > input, #launcher .gwl-panel .field > select, #launcher .gwl-panel .field > textarea { flex: 1; min-width: 0; }
+#launcher .gwl-panel .field.top { align-items: flex-start; }
+#launcher .gwl-panel details summary { cursor: pointer; color: #444; font-weight: bold; margin: 4px 0; }
+#launcher .gwl-panel textarea { width: 100%; resize: vertical; }
+#launcher .acct { padding: 6px 8px; margin-bottom: 8px; background: #f3f3f3; outline: 1px solid #ddd; }
+#launcher .acct form { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+#launcher .acct input { flex: 1 1 120px; min-width: 0; }
+#launcher .acct .row { margin-top: 6px; }
+#launcher .steam-qr { width: 168px; height: 168px; margin: 8px 0; padding: 6px; background: #fff; outline: 1px solid #ccc; }
+#launcher .steam-qr svg { display: block; width: 100%; height: 100%; }
+#launcher .swatches { display: flex; flex-wrap: wrap; gap: 4px; }
+#launcher .swatches button { width: 24px; height: 24px; border: 2px solid #fff; outline: 1px solid #777; cursor: pointer; padding: 0; color: #777; font-weight: bold; }
+#launcher .swatches button.none { background: #f4f4f4; }
+#launcher .swatches button[aria-checked="true"] { outline: 2px solid var(--dk-sel); }
+#launcher .seg { display: flex; gap: 2px; }
+#launcher .seg button { height: 24px; padding: 0 10px; color: #333; border: 4px solid transparent; border-image: var(--dk-button) 8 fill / 4px; cursor: pointer; }
+#launcher .seg button.on { border-image-source: var(--dk-button-d); }
+#launcher input[type="color"] { width: 36px; height: 24px; padding: 0 2px; border: 1px solid #777; background: #fff; cursor: pointer; }
+/* Lists of saves, versions and addons */
+#launcher .gwl-panel .tabs { display: flex; gap: 2px; margin: 0 0 6px; }
+#launcher .gwl-panel .tabs button { height: 24px; padding: 0 10px; color: #333; border: 4px solid transparent; border-image: var(--dk-button) 8 fill / 4px; cursor: pointer; }
+#launcher .gwl-panel .tabs button.on { border-image-source: var(--dk-button-d); }
+#launcher .savelist, #launcher .vlist { display: flex; flex-direction: column; gap: 0; margin: 6px 0; outline: 1px solid #ccc; background: #fff; }
+#launcher .saverow, #launcher .vrow { display: grid; grid-template-columns: 96px 1fr auto; gap: 4px 10px; align-items: center; padding: 4px 6px; transition: background .15s; }
+#launcher .vrow { grid-template-columns: 1fr auto; }
+#launcher .saverow:nth-child(even), #launcher .vrow:nth-child(even) { background: rgba(0,0,0,.04); }
+#launcher .saverow:hover, #launcher .vrow:hover { background: var(--dk-hover); }
+#launcher .saverow.hl, #launcher .vrow.hl { background: rgba(91,140,248,.45); }
+#launcher .saverow > img { width: 96px; height: 54px; object-fit: cover; background: #ccc; outline: 1px solid rgba(0,0,0,.3); }
+#launcher .saverow > img.nothumb { background: linear-gradient(135deg, #3d8bd9, #1b4f86); }
+#launcher .saveinfo, #launcher .vinfo { display: flex; flex-direction: column; min-width: 0; }
+#launcher .saveinfo b, #launcher .vinfo b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#launcher .saveinfo small, #launcher .vinfo small { color: var(--dk-mid); }
+#launcher .vbtns { display: flex; gap: 2px; }
+#launcher .vshare { grid-column: 1 / -1; display: flex; gap: 4px; }
+#launcher .vshare input { flex: 1; min-width: 0; font-family: Consolas, "DejaVu Sans Mono", monospace; font-size: 12px; }
+#launcher .weight { font-size: 11px; font-weight: bold; margin-left: 4px; }
+#launcher .note-box { margin: 0 0 6px; padding: 4px 8px; background: var(--dk-tip); outline: 1px solid #c9b860; }
+#launcher .addons { flex: 1; min-width: 0; display: grid; gap: 2px; }
+#launcher .arow { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-bottom: 1px solid #eee; }
+#launcher .arow img { width: 32px; height: 32px; object-fit: cover; background: #ddd; flex: none; }
+#launcher .arow span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#launcher .arow small { color: #888; white-space: nowrap; }
+#launcher .arow a { font-weight: bold; white-space: nowrap; }
+#launcher .addons form.say { display: flex; gap: 4px; }
+#launcher .addons form.say input, #launcher .gwl-panel form.say input { flex: 1; min-width: 0; }
+#launcher .gwl-panel form.say { display: flex; gap: 4px; }
+#launcher .addons .total { font-weight: bold; color: #444; margin-top: 2px; }
+#launcher .muted { color: #999; }
+#launcher .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; max-height: 160px; overflow: auto; font-size: 12px; }
+/* Profile editor */
+#launcher .pf-h { margin: 10px 0 6px; }
+#launcher .pf-h small { font: 11px Tahoma, Verdana, sans-serif; color: #888; margin-left: 6px; }
+#launcher .pf-grid { display: grid; grid-template-columns: 240px 1fr; gap: 10px; align-items: start; margin-bottom: 6px; }
+#launcher .pf-fields .row { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+#launcher .pf-preview .gwc-card { width: 240px; }
+#launcher .pf-custom { flex: 1; display: flex; gap: 4px; }
+#launcher .pf-custom input { flex: 1; min-width: 0; }
+#launcher .pf-emoji { width: 30px; padding: 0; }
+#launcher .gwl-window { container-type: normal; }
+#launcher .gwl-window > .gw-picker { z-index: 40; }
+
+/* Toasts while the chat tab is not open */
+.gw-toasts { position: fixed; right: 16px; bottom: 16px; z-index: 2147483001; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+.gw-toast { display: flex; gap: 8px; width: 320px; padding: 6px 8px; color: #000; text-align: left; pointer-events: auto; cursor: pointer;
+  border: 4px solid transparent; border-image: var(--dk-tooltip) 8 fill / 4px; filter: drop-shadow(0 4px 10px rgba(0,0,0,.4)); animation: gw-toast-in .25s cubic-bezier(.2,.8,.2,1); font: 13px/1.35 Tahoma, Verdana, "DejaVu Sans", sans-serif; }
+html:not(.dk-ready) .gw-toast { background: #fff5af; border: 1px solid #000; }
+.gw-toast > span { min-width: 0; }
+.gw-toast b { display: block; }
+.gw-toast small { display: block; margin-top: 1px; color: #666; font-size: 11px; }
+.gw-toast img.si { width: 16px; height: 16px; flex: none; image-rendering: pixelated; }
+.gw-toast span span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: #333; }
+@keyframes gw-toast-in { from { transform: translateX(24px); opacity: 0; } }
+
+@media (max-width: 900px) {
+  #launcher .gwl-window { width: 100vw; height: 100vh; }
+  #launcher .gwl-play, #launcher .gwl-options, #launcher .pf-grid { grid-template-columns: 1fr; }
+  #launcher .gwl-play { height: auto; }
+  #launcher .gwl-right { overflow: visible; }
+  #launcher .gwl-cont { grid-template-columns: 1fr; }
+  #launcher .gwl-window .dk-tinfo [data-credit] { display: none; }
+  #launcher .dk-tabs { overflow-x: auto; scrollbar-width: none; }
+  #launcher .gwl-me span { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { #launcher .gwl-window, #launcher .gw-toast { transition: none; animation: none; } }
+
+/* Admin: Automod tab (web/admin.js) */
+#launcher .am-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px; margin: 4px 0 8px; }
+#launcher .am-box { display: flex; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid #d8d8d8; border-radius: 3px; background: rgba(255, 255, 255, .5); }
+#launcher .am-rule { display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
+#launcher .am-rule small, #launcher .am h3 small { font-weight: normal; color: var(--dk-mid); }
+#launcher .am h3 .am-rule { display: inline-flex; margin-left: 8px; font-size: 12px; }
+#launcher .am-num { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; }
+#launcher .am-num input { width: 70px; }
+#launcher .am-text { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--dk-mid); }
+#launcher .am-text textarea { width: 100%; box-sizing: border-box; resize: vertical; font: 12px monospace; }
+#launcher .am .bad { color: #c22; }
+
+/* Browser tab (web/browser-tab.js) */
+#launcher .gwb { display: flex; flex-direction: column; gap: 4px; height: 100%; min-height: 0; }
+#launcher .gwb-bar { display: flex; align-items: center; gap: 3px; }
+#launcher .gwb-bar > .dk-btn { padding: 0 5px; }
+#launcher .gwb-bar > .dk-btn:disabled { opacity: .45; }
+#launcher .gwb-addr { flex: 1; display: flex; align-items: center; gap: 4px; min-width: 0; margin-left: 4px; padding-left: 4px; }
+#launcher .gwb-addr input { flex: 1; min-width: 0; }
+#launcher .gwb-view { position: relative; flex: 1; min-height: 0; border: 1px solid #777; background: #fff; }
+#launcher .gwb-view iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
+#launcher .gwb-view iframe[hidden], #launcher .gwb-start[hidden], #launcher .gwb-loading[hidden] { display: none; }
+#launcher .gwb-start { position: absolute; inset: 0; overflow: auto; display: grid; place-items: start center; padding: 40px 16px; background: #e8e9ea; }
+#launcher .gwb-home { width: min(620px, 100%); display: flex; flex-direction: column; gap: 10px; padding: 14px; }
+#launcher .gwb-home h2 { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 20px; }
+#launcher .gwb-search { display: flex; gap: 4px; }
+#launcher .gwb-search input { flex: 1; min-width: 0; font-size: 14px; padding: 4px 6px; }
+#launcher .gwb-shortcuts { display: flex; flex-wrap: wrap; gap: 4px; }
+#launcher .gwb-shortcuts .dk-btn { display: inline-flex; align-items: center; gap: 5px; }
+#launcher .gwb-err { color: #b22; margin: 0; }
+#launcher .gwb-loading { position: absolute; left: 0; right: 0; top: 0; height: 3px; overflow: hidden; pointer-events: none; }
+#launcher .gwb-loading span { position: absolute; top: 0; bottom: 0; width: 30%; background: var(--dk-sel, #3b8beb); animation: gwb-load 1.1s ease-in-out infinite; }
+@keyframes gwb-load { from { left: -30%; } to { left: 100%; } }
+#launcher .gwb-status { min-height: 16px; font-size: 11px; color: var(--dk-mid); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+@media (prefers-reduced-motion: reduce) { #launcher .gwb-loading span { animation: none; left: 0; width: 100%; opacity: .5; } }
+
+/* The browser blocks the hub (Local Network Access): a notice above the tabs */
+#launcher .gwl-lna { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 4px; padding: 6px 8px; background: #fff4c2; border: 1px solid #c9a227; }
+#launcher .gwl-lna > div { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+#launcher .gwl-lna span { font-size: 12px; white-space: normal; }
+#launcher .gwl-lna .dk-btn { flex: none; align-self: center; }
+#launcher .gwl-lna .dk-wbtn { flex: none; }

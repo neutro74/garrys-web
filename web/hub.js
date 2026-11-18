@@ -62,7 +62,14 @@ export class Hub extends EventTarget {
       }
     }
     if (m.t === 'rooms') { this.roomList = m.rooms; this.online = m.online; }
-    if (m.t === 'authed') { this.account = m.user; this.isAdmin = !!m.admin; this.myStatus = m.status ?? 'online'; if (this.me && m.user) this.me.key = 'a:' + m.user; }
+    if (m.t === 'authed') {
+      const was = this.account;
+      this.account = m.user; this.isAdmin = !!m.admin; this.myStatus = m.status ?? 'online'; if (this.me && m.user) this.me.key = 'a:' + m.user;
+      if (m.user && m.user !== was) for (const r of this.rooms) this.send({ t: 'join', room: r });   // chat rooms are for accounts: join again now
+    }
+    if (m.t === 'pings') { this.pings = m.list; this.pingsSeenAt = m.seen; }
+    if (m.t === 'ping') (this.pings ??= []).unshift(m);
+    if (m.t === 'pings-seen') this.pingsSeenAt = m.at;
     if (m.t === 'my-status') this.myStatus = m.status;
     if (m.t === 'presence') { (this.presence ??= new Map()); if (m.status === 'offline') this.presence.delete(m.user); else this.presence.set(m.user, m); }
     if (m.t === 'presence-list') this.presence = new Map(m.users.map((p) => [p.user, p]));
@@ -85,6 +92,9 @@ export class Hub extends EventTarget {
   rename(name) { store.set('name', name); if (this.me) this.send({ t: 'nick', name }); }
   join(room) { this.rooms.add(room); this.send({ t: 'join', room }); }
   leave(room) { this.rooms.delete(room); this.send({ t: 'leave', room }); }
+  // Pings (mentions and answers): looked at up to now; usernames for @ suggestions.
+  pingsSeen(at = Date.now()) { this.pingsSeenAt = at; return this.send({ t: 'pings-seen', at }); }
+  findUsers(q) { return this.send({ t: 'find-users', q }); }
   say(room, text, extra = {}) { return this.send({ t: 'say', room, text, ...extra }); }
   // Changing a message: `where` is { room } for a channel or { with } for a private chat.
   edit(where, id, text) { return this.send({ t: 'edit', ...where, id, text }); }

@@ -34,7 +34,7 @@ export async function isAdmin() {
   try { return (await api('whoami', { admin: false })).admin; } catch { return false; }
 }
 
-const TABS = [['players', 'Players', 'group'], ['bans', 'Bans & mutes', 'delete'], ['chat', 'Chat', 'comments'], ['games', 'Games', 'controller'], ['accounts', 'Accounts', 'user'], ['emotes', 'Emojis & stickers', 'emoticon_smile'], ['hub', 'Hub', 'server'], ['term', 'Terminal', 'application_xp_terminal'], ['audit', 'Audit log', 'page_white_text']];
+const TABS = [['players', 'Players', 'group'], ['bans', 'Bans & mutes', 'delete'], ['chat', 'Chat', 'comments'], ['automod', 'Automod', 'shield'], ['games', 'Games', 'controller'], ['accounts', 'Accounts', 'user'], ['emotes', 'Emojis & stickers', 'emoticon_smile'], ['hub', 'Hub', 'server'], ['term', 'Terminal', 'application_xp_terminal'], ['audit', 'Audit log', 'page_white_text']];
 const DURATIONS = [['60', '1 hour'], ['1440', '1 day'], ['10080', '7 days'], ['43200', '30 days'], ['0', 'Forever']];
 
 export function mountAdmin(el) {
@@ -57,7 +57,7 @@ export function mountAdmin(el) {
   async function refresh() {
     try { st = await api('state'); } catch (e) { if (e.status === 401) return unlockScreen(e.message); throw e; }
     retried = false;
-    if (tab !== 'term' && tab !== 'emotes') draw();
+    if (tab !== 'term' && tab !== 'emotes' && tab !== 'automod') draw();   // forms there keep what is being typed
   }
   function start() {
     refresh().catch((e) => { body.textContent = e.message; });
@@ -148,6 +148,56 @@ export function mountAdmin(el) {
       for (const b of body.querySelectorAll('[data-del]')) b.onclick = () => act('delete', { room, id: b.dataset.del });
       body.querySelector('[data-clear]').onclick = async () => { if (await dkConfirm(`Hide every message in #${room} for everyone?`, { title: 'Clear channel', ok: 'Clear', danger: true })) act('clear', { room }); };
       body.querySelector('[data-ann]').onsubmit = (ev) => { ev.preventDefault(); const t = body.querySelector('[data-text]'); if (t.value.trim()) act('announce', { text: t.value }, () => { t.value = ''; }); };
+    },
+    // Automod (hub/automod.mjs): which rules run, their limits, extra words, a tester, and what it stopped lately.
+    automod() {
+      const am = st.automod;
+      if (!am) { body.innerHTML = '<p class="none">This hub has no automod (update the hub).</p>'; return; }
+      const c = am.config, chk = (path, label, tip = '') => `<label class="am-rule"><input type="checkbox" data-am="${path}" ${path.split('.').reduce((o, k) => o?.[k], c) ? 'checked' : ''}> <b>${label}</b>${tip ? ` <small>${tip}</small>` : ''}</label>`;
+      const num = (path, label, min, max) => `<label class="am-num">${label} <input type="number" data-am="${path}" min="${min}" max="${max}" value="${esc(path.split('.').reduce((o, k) => o?.[k], c))}"></label>`;
+      const RULE = { words: 'Word', links: 'Link', mentions: 'Mentions', chars: 'Repeats', caps: 'Capitals', spam: 'Spam' };
+      body.innerHTML = `<div class="am">
+        <h3>Automod ${chk('enabled', 'On', 'checks channel messages, edits, private messages, names and profiles; admins are never checked')}</h3>
+        <div class="am-grid">
+          <div class="am-box">${chk('words.on', 'Blocked words')}${chk('words.builtin', 'Built-in list of slurs', 'also catches l3tt3rs, a.c.c.e.n.t.s and s p a c i n g')}
+            <label class="am-text">Extra words (one per line; word* matches any ending)<textarea data-am-list="words.custom" rows="4" spellcheck="false">${esc(c.words.custom.join('\n'))}</textarea></label>
+            <label class="am-text">Always allowed (one per line; turns off a built-in word)<textarea data-am-list="words.allow" rows="2" spellcheck="false">${esc(c.words.allow.join('\n'))}</textarea></label></div>
+          <div class="am-box">${chk('links.on', 'Links')}${chk('links.scams', 'Stop fake Steam and Discord sites and "free Nitro" scams')}
+            ${num('links.newMinutes', 'New accounts can post links after (minutes, 0 = right away)', 0, 10080)}
+            <label class="am-text">Blocked sites (one per line, e.g. example.com)<textarea data-am-list="links.blocked" rows="2" spellcheck="false">${esc(c.links.blocked.join('\n'))}</textarea></label></div>
+          <div class="am-box">${chk('spam.on', 'Repeated messages')}${num('spam.repeats', 'Same message', 2, 20)}${num('spam.seconds', 'times within (seconds)', 5, 3600)}</div>
+          <div class="am-box">${chk('mentions.on', 'Mention spam')}${num('mentions.max', 'Most people one message can @mention', 1, 50)}</div>
+          <div class="am-box">${chk('caps.on', 'All capitals', 'not in private messages')}${num('caps.percent', 'Capital letters (%)', 50, 100)}${num('caps.min', 'in a message with at least this many letters', 4, 400)}</div>
+          <div class="am-box">${chk('chars.on', 'Repeated characters and piles of accents')}${num('chars.run', 'One character this many times in a row', 5, 100)}</div>
+          <div class="am-box">${chk('strikes.on', 'Mute repeat offenders')}${num('strikes.count', 'Blocked messages', 1, 50)}${num('strikes.minutes', 'within (minutes)', 1, 1440)}${num('strikes.muteMinutes', 'mutes them for (minutes)', 1, 10080)}
+            <small class="hint">Automod's mutes are listed under Bans &amp; mutes, where they can be lifted.</small></div>
+        </div>
+        <div class="row"><button type="button" class="btn-primary" data-am-save>Save automod settings</button><span class="hint" data-am-msg></span></div>
+        <h3>Try a message</h3>
+        <form class="inline" data-am-test><input data-am-text maxlength="400" placeholder="Type something to see what automod would do with it"><select data-am-where><option value="channel">Channel</option><option value="dm">Private message</option><option value="name">Name or profile</option></select><button class="btn">Check</button></form>
+        <p class="hint" data-am-result></p>
+        <h3>Stopped lately <small>${am.log.length}</small> <button type="button" class="btn mini" data-am-refresh>Refresh</button></h3>
+        <table class="grid"><tr><th>When</th><th>Who</th><th>Rule</th><th>Message</th><th></th></tr>${am.log.map((e, i) => `<tr><td><small>${when(e.at)}</small></td><td>${esc(e.name ?? '?')}${e.account ? `<br><span class="acct">@${esc(e.account)}</span>` : ''}</td>
+          <td>${esc(RULE[e.rule] ?? e.rule)}${e.muted ? '<br><b class="bad">muted</b>' : ''}<br><small>${esc(e.where)}${e.room ? ' #' + esc(e.room) : ''}</small></td><td><small>${esc(e.text)}</small></td>
+          <td class="acts">${e.account ? `<button class="btn" data-am-mute="${i}">Mute…</button><button class="btn danger" data-am-ban="${i}">Ban…</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="none">Nothing stopped yet.</td></tr>'}</table></div>`;
+      const msg = body.querySelector('[data-am-msg]');
+      body.querySelector('[data-am-save]').onclick = async () => {
+        const conf = structuredClone(c);
+        const set = (path, v) => { const k = path.split('.'), last = k.pop(); k.reduce((o, x) => o[x], conf)[last] = v; };
+        for (const i of body.querySelectorAll('[data-am]')) set(i.dataset.am, i.type === 'checkbox' ? i.checked : +i.value);
+        for (const t of body.querySelectorAll('[data-am-list]')) set(t.dataset.amList, t.value.split('\n').map((x) => x.trim()).filter(Boolean));
+        msg.textContent = 'Saving…';
+        try { const r = await api('automod', { method: 'POST', body: { config: conf } }); st.automod.config = r.config; msg.textContent = 'Saved. Automod uses these settings now.'; }
+        catch (e) { msg.textContent = e.message; }
+      };
+      body.querySelector('[data-am-test]').onsubmit = async (ev) => {
+        ev.preventDefault(); const out = body.querySelector('[data-am-result]');
+        try { const r = await api('automod-test', { method: 'POST', body: { text: body.querySelector('[data-am-text]').value, where: body.querySelector('[data-am-where]').value } }); out.textContent = r.hit ? `Blocked (${RULE[r.hit.rule] ?? r.hit.rule}): ${r.hit.reason}` : 'Allowed. (Saved settings are used; save first after changing them.)'; }
+        catch (e) { out.textContent = e.message; }
+      };
+      body.querySelector('[data-am-refresh]').onclick = () => refresh().then(draw);
+      for (const b of body.querySelectorAll('[data-am-mute]')) b.onclick = () => dialog('mute', { account: am.log[+b.dataset.amMute].account });
+      for (const b of body.querySelectorAll('[data-am-ban]')) b.onclick = () => dialog('ban', { account: am.log[+b.dataset.amBan].account });
     },
     games() {
       body.innerHTML = `<h3>Open games <small>${st.lobbies.length}</small></h3><table class="grid"><tr><th>Game</th><th>Host</th><th>Players</th><th></th></tr>

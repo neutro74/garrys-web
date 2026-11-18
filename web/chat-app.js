@@ -40,14 +40,14 @@ const stamp = (t) => { const d = dayOf(t); return d === 'Today' ? `Today at ${ti
 
 // Messages from channels and private chats in one shape.
 function norm(m) {
-  const common = { id: m.id, text: m.text ?? '', at: m.at, reply: m.reply, attach: m.attach, sticker: m.sticker, edited: m.edited };
+  const common = { id: m.id, text: m.text ?? '', at: m.at, reply: m.reply, attach: m.attach, sticker: m.sticker, edited: m.edited, everyone: m.everyone };
   if (m.t === 'dm') return { ...common, key: 'a:' + m.from, account: m.from, name: m.name || m.from };
   return { ...common, key: m.from?.key ?? 'x:' + (m.from?.id ?? ''), account: m.from?.account, name: m.from?.name ?? '?', sys: m.sys };
 }
 
 // Text with **bold**, *italic*, `code`, links and @mentions, built as DOM nodes (never as HTML).
 const TOKENS = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\s][^*\n]*\*)|(\bhttps?:\/\/[^\s<>"]+)|(@[a-z0-9_]{3,20}\b)|(\|\|[^|\n]+\|\|)|(:[a-z0-9_]{1,40}:)/gi;
-function richText(text, me) {
+function richText(text, me, everyone = null) {
   const out = document.createDocumentFragment();
   let last = 0;
   for (const m of text.matchAll(TOKENS)) {
@@ -57,7 +57,12 @@ function richText(text, me) {
     else if (m[2]) out.append(h('strong', null, t.slice(2, -2)));
     else if (m[3]) out.append(h('em', null, t.slice(1, -1)));
     else if (m[4]) { const a = h('a', null, t); a.href = t; a.target = '_blank'; a.rel = 'noopener noreferrer'; out.append(a); }
-    else if (m[5]) { const s = h('span', 'gwc-mention' + (me && t.slice(1).toLowerCase() === me ? ' me' : ''), t); s.dataset.user = t.slice(1).toLowerCase(); out.append(s); }
+    else if (m[5]) {   // @someone shows their display name (click for their card); @everyone/@here only count from admins
+      const u = t.slice(1).toLowerCase();
+      if (u === 'everyone' || u === 'here') { out.append(everyone ? h('span', 'gwc-mention all', t) : t); last = m.index + t.length; continue; }
+      const p = cachedProfile(u), s = h('span', 'gwc-mention' + (me && u === me ? ' me' : ''), '@' + (p ? displayName(p, u) : u));
+      s.dataset.user = u; s.title = '@' + u; out.append(s);
+    }
     else if (m[6]) { const s = h('span', 'gwc-spoiler', t.slice(2, -2)); s.title = 'Spoiler: click to show'; s.onclick = () => s.classList.add('shown'); out.append(s); }
     else if (m[7]) {   // :name: emojis; an unknown name stays as typed
       const url = emojiUrl(t.slice(1, -1));
@@ -70,6 +75,18 @@ function richText(text, me) {
 }
 // A message of only emojis (up to 12) shows them large, as Discord does.
 const onlyEmoji = (text) => { const t = text.trim(); return !!t && t.length < 200 && /^(?:\s*(?::[a-z0-9_]{1,40}:|\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}|[\u{1F3FB}-\u{1F3FF}])*))+\s*$/u.test(t) && (t.match(/:[a-z0-9_]+:|\p{Extended_Pictographic}/gu) ?? []).length <= 12; };
+const mentionRe = (u) => new RegExp(`(?<![\\w\`])@${u}\\b`, 'i');
+// A short "pling" for pings (no sound file to load).
+let audioCtx = null;
+function pingSound() {
+  try {
+    audioCtx ??= new AudioContext();
+    const t = audioCtx.currentTime, o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = 'sine'; o.frequency.setValueAtTime(880, t); o.frequency.exponentialRampToValueAtTime(1320, t + 0.08);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+    o.connect(g).connect(audioCtx.destination); o.start(t); o.stop(t + 0.4);
+  } catch { /* no audio */ }
+}
 const shareCode = (text) => /[?&]save=([A-Za-z0-9_-]{6,12})\b/.exec(text)?.[1] ?? null;
 
 // The app's stylesheet, added to the page once (relative to this module, so it also works from the CDN).
@@ -92,11 +109,14 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
     </aside>
     <section class="gwc-main">
       <header class="gwc-head"><span class="gwc-title" data-title></span><span class="gwc-topic" data-topic></span><span class="gwc-tools">
+        <button type="button" class="dk-btn" data-notif data-tip="Notification settings" aria-label="Notification settings"><img class="si" alt="" data-ic="bell"></button>
+        <button type="button" class="dk-btn gwc-inboxbtn" data-inbox data-tip="Mentions and replies" aria-label="Mentions"><img class="si" alt="" data-ic="email_open"><span class="gwc-badge" data-inboxn hidden></span></button>
         <button type="button" class="dk-btn" data-members data-tip="Show or hide the people here" aria-label="People"><img class="si" alt="" data-ic="group"></button>
         ${onClose ? '<button type="button" class="dk-wbtn close" data-close data-tip="Close (Esc)" aria-label="Close"></button>' : ''}</span></header>
       <div class="gwc-body"><div class="gwc-scroll" data-scroll><div class="gwc-log" data-log aria-live="polite"></div></div><aside class="gwc-members" data-memberlist></aside></div>
       <div class="gwc-typing" data-typing></div>
       <form class="gwc-compose" data-compose autocomplete="off">
+        <div class="gwc-suggest dk-menu" data-suggest hidden role="listbox"></div>
         <div class="gwc-replybar" data-replybar hidden></div>
         <div class="gwc-inputrow">
           <button type="button" class="dk-btn" data-attach data-tip="Add a picture" aria-label="Add a picture"><img class="si" alt="" data-ic="picture"></button>
@@ -108,17 +128,31 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
         </div>
       </form>
     </section>
-    <div class="gwc-pop" data-pop hidden></div>`;
+    <div class="gwc-pop" data-pop hidden></div>
+    <div class="gwc-wall" data-wall hidden><div class="dk-window gwc-wallbox"><div class="dk-title"><img class="si" alt="" data-ic="lock"><span>Chat needs an account</span></div>
+      <div class="dk-panel"><p>Chat, private messages and friends are for Garry's Web accounts, so everyone you talk to has a name that is really theirs and moderation can work.</p>
+      <p>Making one takes a few seconds and keeps your saves and settings with you too.</p><button type="button" class="dk-btn blue" data-wallgo><img class="si" alt="" data-ic="user_add">Sign in or create an account</button></div></div></div>`;
   const $ = (q) => root.querySelector(q);
   for (const i of root.querySelectorAll('[data-ic]')) i.src = icon(i.dataset.ic);
   const nav = $('[data-nav]'), logEl = $('[data-log]'), scroll = $('[data-scroll]'), text = $('[data-text]'), pop = $('[data-pop]');
   pop.classList.add('dk'); document.body.append(pop);   // pop-ups live on the page itself, above everything (removed in destroy)
-  const memberList = $('[data-memberlist]'), typingEl = $('[data-typing]'), replyBar = $('[data-replybar]');
+  const memberList = $('[data-memberlist]'), typingEl = $('[data-typing]'), replyBar = $('[data-replybar]'), suggest = $('[data-suggest]');
+  // Chat is for accounts only (the hub refuses guests too): without one, a wall asks to sign in.
+  const drawWall = () => { $('[data-wall]').hidden = !!account(); };
+  $('[data-wallgo]').onclick = () => onEditProfile();
+  drawWall();
 
   // ---- State ----
   const logs = new Map(), done = new Map(), members = new Map(), typing = new Map(), mentions = new Map();
   let convos = [], view = ls.get('chat-view', { kind: 'channel', id: 'general' }), replyTo = null, editing = null, showMembers = ls.get('chat-members', mode !== 'overlay'), loadingOlder = false, shown = true;
   const read = ls.get('chat-read', {});
+  // Notifications per channel or private chat: 'all' messages, only 'mentions' (and answers), or 'none'; muted ones also stay
+  // quiet in the sidebar. Channels default to mentions, private chats to everything. Sounds can be turned off.
+  const notif = ls.get('chat-notify', {}), mutedK = ls.get('chat-muted', {}), noEveryone = ls.get('chat-noeveryone', {});
+  let sounds = ls.get('chat-sound', true), replyPing = ls.get('chat-replyping', true);
+  const level = (k) => notif[k] ?? (k.startsWith('d:') ? 'all' : 'mentions');
+  const saveNotif = () => { ls.set('chat-notify', notif); ls.set('chat-muted', mutedK); ls.set('chat-noeveryone', noEveryone); };
+  const newSince = new Map();   // conversation -> its read time when it was opened (the "New" line)
   const keyOf = (v = view) => (v.kind === 'channel' ? 'c:' + v.id : v.kind === 'dm' ? 'd:' + v.with : 'friends');
   const whereOf = (v = view) => (v.kind === 'channel' ? { room: v.id } : { with: v.with });
   const channels = () => (hub.roomList?.length && hub.roomList[0].category ? hub.roomList : FALLBACK_CHANNELS);
@@ -129,7 +163,18 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
   const myKey = () => hub.me?.key ?? null;
     const lastAt = (k) => logs.get(k)?.at(-1)?.at ?? 0;
   const unread = (k) => lastAt(k) > (read[k] ?? 0) && logs.get(k)?.at(-1)?.key !== myKey();
-  const markRead = (k = keyOf()) => { if (k === 'friends') return; const t = lastAt(k); if (t > (read[k] ?? 0)) { read[k] = t; ls.set('chat-read', read); } mentions.delete(k); };
+  const markRead = (k = keyOf()) => { if (k === 'friends') return; const t = lastAt(k); if (t > (read[k] ?? 0)) { read[k] = t; ls.set('chat-read', read); } mentions.delete(k); drawInboxBadge(); };
+  // Does this message ping me? @me, an answer to my message (with its ping on), or an admin's @everyone/@here.
+  const pingsMe = (m) => {
+    const me = myAccount(); if (!me || m.key === myKey()) return false;
+    return mentionRe(me).test(m.text ?? '') || (m.reply?.account === me && m.reply.ping) || (!!m.everyone && !noEveryone[keyOf()]);
+  };
+  // Mentions in a channel: the hub's kept pings (hub.pings) newer than the last time that channel was read.
+  const pingCount = (k) => {
+    if (!k.startsWith('c:')) return mentions.get(k) ?? 0;
+    const room = k.slice(2), since = read[k] ?? 0;
+    return (hub.pings ?? []).filter((p) => p.room === room && p.at > since && !(p.kind !== 'mention' && p.kind !== 'reply' && noEveryone[k])).length;
+  };
   // A message is only "seen" when the chat is on screen and the window has focus.
   const looking = () => shown && document.visibilityState === 'visible';
   const presence = (u) => (u ? hub.presence?.get(u) ?? { user: u, status: 'offline' } : null);
@@ -145,22 +190,25 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
     let cat = null;
     for (const c of channels()) {
       if (c.category !== cat) { cat = c.category; frag.append(h('div', 'gwc-cat', si(cat === 'Play' ? 'controller' : cat === 'Other' ? 'folder' : 'world'), h('span', null, cat))); }
-      const k = 'c:' + c.name, b = h('button', 'gwc-navitem gwc-chan' + (view.kind === 'channel' && view.id === c.name ? ' on' : '') + (unread(k) ? ' unread' : ''), si(c.readonly ? 'sound' : 'comments'), h('span', 'gwc-label', c.label ?? c.name));
-      if (mentions.get(k)) b.append(h('span', 'gwc-badge', String(mentions.get(k))));
+      const k = 'c:' + c.name, b = h('button', 'gwc-navitem gwc-chan' + (view.kind === 'channel' && view.id === c.name ? ' on' : '') + (unread(k) && !mutedK[k] ? ' unread' : '') + (mutedK[k] ? ' muted' : ''), si(c.readonly ? 'sound' : 'comments'), h('span', 'gwc-label', c.label ?? c.name));
+      if (mutedK[k]) b.append(si('sound_mute', 'Muted'));
+      const n = pingCount(k); if (n) b.append(h('span', 'gwc-badge', String(n)));
       b.onclick = () => open({ kind: 'channel', id: c.name });
+      b.oncontextmenu = (e) => { e.preventDefault(); notifMenu(k, b); };
       frag.append(b);
     }
     drawVoice(frag);
     const dmHead = h('div', 'gwc-cat gwc-dmcat', si('email'), h('span', null, 'Private messages'));
     if (myAccount()) { const add = h('button', 'gwc-add', '+'); add.title = 'Start a private chat'; add.onclick = async () => { const u = await dkPrompt('Who do you want to message? (their Garry\'s Web username)', { title: 'New private chat', placeholder: 'username', ok: 'Message' }); if (u?.trim()) open({ kind: 'dm', with: u.trim().toLowerCase().replace(/^@/, '') }); }; dmHead.append(add); }
     frag.append(dmHead);
-    if (!myAccount()) frag.append(h('p', 'gwc-hint', 'Sign in to a Garry\'s Web account for private chats and friends.'));
     for (const c of convos) {
       const k = 'd:' + c.with, p = cachedProfile(c.with);
       const b = h('button', 'gwc-navitem gwc-dm' + (view.kind === 'dm' && view.with === c.with ? ' on' : '') + (unread(k) || (c.unread && !(read[k] >= c.last.at)) ? ' unread' : ''));
       b.append(si(BULLET[presence(c.with).status] ?? 'bullet_black'), h('span', 'gwc-label', displayName(p, c.with)));
+      if (mutedK[k]) { b.classList.add('muted'); b.append(si('sound_mute', 'Muted')); }
       if (mentions.get(k)) b.append(h('span', 'gwc-badge', String(mentions.get(k))));
       b.onclick = () => open({ kind: 'dm', with: c.with });
+      b.oncontextmenu = (e) => { e.preventDefault(); notifMenu(k, b); };
       frag.append(b);
     }
     nav.replaceChildren(frag);
@@ -288,6 +336,7 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
     root.classList.toggle('gwc-nomembers', !showMembers || view.kind === 'friends');
     $('[data-title]').prepend(si(view.kind === 'channel' ? 'comments' : view.kind === 'dm' ? 'user' : 'group'));
     $('[data-members]').hidden = view.kind === 'friends';
+    $('[data-notif]').hidden = view.kind === 'friends';
   }
   function placeholder() {
     const c = view.kind === 'channel' ? channel(view.id) : null;
@@ -312,10 +361,12 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
         else { const p = cachedProfile(view.with); intro.append(avatarEl(p, view.with, 72), h('h2', null, displayName(p, view.with)), h('p', null, `This is the beginning of your private chat with @${view.with}. Only the two of you can read it.`)); }
         frag.append(intro);
       }
-      let prev = null, day = '';
+      let prev = null, day = '', newShown = false;
+      const since = newSince.get(k) ?? Infinity;
       for (const m of list) {
         const d = dayOf(m.at);
         if (d !== day) { day = d; frag.append(h('div', 'gwc-day', h('span', null, d))); prev = null; }
+        if (!newShown && !m.sys && m.at > since && m.key !== myKey()) { newShown = true; frag.append(h('div', 'gwc-newline', h('span', null, 'New'))); prev = null; }
         frag.append(msgEl(m, prev && !m.sys && !prev.sys && prev.key === m.key && m.at - prev.at < GROUP_MS && !m.reply));
         prev = m;
       }
@@ -326,11 +377,11 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
     if (looking() && atBottom()) markRead();
   }
   function msgEl(m, compact) {
-    if (m.sys) return h('div', 'gwc-sys', m.sys);
+    if (m.sys) return h('div', 'gwc-sys' + (m.cls ? ' ' + m.cls : ''), m.sys);
     const row = h('div', 'gwc-msg' + (compact ? ' compact' : '') + (m.key === myKey() ? ' mine' : ''));
     row.dataset.id = m.id ?? '';
     const me = myAccount();
-    if (me && new RegExp(`@${me}\\b`, 'i').test(m.text)) row.classList.add('mentioned');
+    if (pingsMe(m)) row.classList.add('mentioned');
     const p = m.account ? cachedProfile(m.account) : null;
     if (m.account && !p) getProfile(m.account).then((x) => { if (x) scheduleRedraw(); });
     if (m.reply) {
@@ -349,7 +400,7 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
       row.append(av, top);
     }
     const body = h('div', 'gwc-text');
-    if (m.text) { body.append(richText(m.text, me)); if (onlyEmoji(m.text)) body.classList.add('jumbo'); }
+    if (m.text) { body.append(richText(m.text, me, m.everyone)); if (onlyEmoji(m.text)) body.classList.add('jumbo'); }
     if (m.edited) body.append(h('small', 'gwc-edited', ' (edited)'));
     row.append(body);
     for (const a of m.attach ?? []) {
@@ -429,7 +480,9 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
     card.append(banner, av);
     const body = h('div', 'gwc-cardbody', h('h3', null, displayName(p, name ?? u)), h('div', 'gwc-handle', u ? `@${u}${p?.pronouns ? ' · ' + p.pronouns : ''}` : 'Guest (no account)'));
     if (p?.custom?.text || p?.custom?.emoji) body.append(h('div', 'gwc-custom', ...statusBits(p, '', 20)));
-    if (pr?.activity?.detail) body.append(h('div', 'gwc-activity', h('small', null, pr.activity.kind === 'launcher' ? 'IN THE LAUNCHER' : 'PLAYING'), h('span', null, pr.activity.detail)));
+    const act = pr?.activity;
+    if (act?.kind === 'launcher') body.append(h('div', 'gwc-activity quiet', si('application'), h('span', null, 'In the launcher')));
+    else if (act?.detail) body.append(h('div', 'gwc-activity', h('small', null, 'Playing Garry\'s Web'), h('b', null, act.kind === 'game' ? act.map || 'A map' : act.kind === 'menu' ? 'Main menu' : act.detail), act.edition ? h('span', null, act.edition) : null));
     if (p?.bio) body.append(h('div', 'gwc-sect', 'About me'), h('p', 'gwc-bio', p.bio));
     if (p?.favorite) body.append(h('div', 'gwc-sect', 'Favourite map or mode'), h('p', null, p.favorite));
     if (p?.links?.length) { const l = h('div', 'gwc-links'); for (const url of p.links) { const a = h('a', null, url.replace(/^https:\/\/(www\.)?/, '').slice(0, 40)); a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer'; l.append(a); } body.append(h('div', 'gwc-sect', 'Links'), l); }
@@ -486,6 +539,71 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
     logEl.replaceChildren(wrap);
   }
 
+  // ---- Pings: the inbox of mentions and answers, jumping to a message, notification settings ----
+  const unseenPings = () => (hub.pings ?? []).filter((p) => p.at > (hub.pingsSeenAt ?? 0) && p.at > (read['c:' + p.room] ?? 0) && !((p.kind === 'everyone' || p.kind === 'here') && noEveryone['c:' + p.room])).length;
+  function drawInboxBadge() { const n = unseenPings(), b = $('[data-inboxn]'); b.hidden = !n; b.textContent = n > 99 ? '99+' : String(n); }
+  function openInbox(anchor) {
+    const box = h('div', 'gwc-inbox dk-window'), list = (hub.pings ?? []).slice(0, 40), seen = hub.pingsSeenAt ?? 0;
+    const top = h('div', 'dk-title', si('email_open'), h('span', null, 'Mentions and replies'));
+    const all = h('button', 'dk-btn', 'Mark all read'); all.type = 'button';
+    all.onclick = () => { for (const c of channels()) { const k = 'c:' + c.name; read[k] = Math.max(read[k] ?? 0, Date.now()); } ls.set('chat-read', read); hub.pingsSeen(); closePop(); drawNav(); drawInboxBadge(); };
+    top.append(all);
+    const body = h('div', 'dk-panel gwc-inboxlist');
+    if (!myAccount()) body.append(h('p', 'gwc-hint', 'Sign in to see your mentions.'));
+    else if (!list.length) body.append(h('p', 'gwc-hint', 'Nothing yet. When someone @mentions you or answers one of your messages, it shows up here, even if you were away.'));
+    for (const p of list) {
+      const from = p.from ?? {}, prof = from.account ? cachedProfile(from.account) : null;
+      if (from.account && !prof) getProfile(from.account).then(() => { if (!pop.hidden && pop.contains(box)) openInbox(anchor); });
+      const row = h('button', 'gwc-inboxrow' + (p.at > seen && p.at > (read['c:' + p.room] ?? 0) ? ' new' : '')); row.type = 'button';
+      const what = p.kind === 'reply' ? 'answered you' : p.kind === 'mention' ? 'mentioned you' : `@${p.kind}`;
+      row.append(avatarEl(prof, from.name ?? '?', 32), h('span', 'gwc-inboxtext',
+        h('span', 'gwc-inboxtop', h('b', null, displayName(prof, from.name ?? '?')), ` ${what} in `, h('b', null, `#${channel(p.room)?.label ?? p.room}`), h('time', null, stamp(p.at))),
+        h('span', 'gwc-inboxmsg', richText(String(p.text ?? '').slice(0, 160), myAccount(), p.kind === 'everyone' || p.kind === 'here'))));
+      row.onclick = () => { closePop(); jumpTo({ kind: 'channel', id: p.room }, p.id); };
+      body.append(row);
+    }
+    box.append(top, body);
+    openPop(box, anchor, 'inbox');
+    hub.pingsSeen(); drawInboxBadge();
+  }
+  // Open a conversation at one message: older pages are fetched until it turns up (up to ten pages back).
+  let jump = null;
+  function jumpTo(target, id) {
+    open(target); jump = { k: keyOf(), id, tries: 0 }; tryJump();
+  }
+  function tryJump() {
+    if (!jump || keyOf() !== jump.k) { jump = null; return; }
+    const el = logEl.querySelector(`[data-id="${CSS.escape(jump.id)}"]`);
+    if (el) { jump = null; el.scrollIntoView({ block: 'center' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1600); return; }
+    const list = logs.get(jump.k), first = list?.find((m) => !m.sys);
+    if (!list) return;   // not loaded yet: tried again when it is
+    if (done.get(jump.k) || !first || jump.tries++ >= 10) { jump = null; sysNote('That message is no longer here.'); return; }
+    loadingOlder = true;
+    if (view.kind === 'channel') hub.roomHistory(view.id, first.at); else hub.dmHistory(view.with, first.at);
+  }
+  // Right-click a channel or private chat (or the bell above the messages): how it notifies.
+  function notifMenu(k, anchor) {
+    const menu = h('div', 'dk-menu gwc-notif'), isCh = k.startsWith('c:');
+    const item = (label, on, fn, ic) => { const b = h('button', on ? 'on' : null, si(ic ?? (on ? 'tick' : 'bullet_white')), label); b.type = 'button'; b.onclick = () => { fn(); saveNotif(); closePop(); drawNav(); drawInboxBadge(); }; menu.append(b); };
+    item('Mark as read', false, () => { read[k] = Math.max(read[k] ?? 0, lastAt(k), Date.now()); ls.set('chat-read', read); mentions.delete(k); }, 'accept');
+    menu.append(h('div', 'gwc-menuhead', 'Notify me about'));
+    const lv = level(k);
+    item('All messages', lv === 'all', () => { notif[k] = 'all'; });
+    item(isCh ? 'Only @mentions and answers' : 'Messages (default)', isCh ? lv === 'mentions' : lv === 'all', () => { notif[k] = isCh ? 'mentions' : 'all'; });
+    item('Nothing', lv === 'none', () => { notif[k] = 'none'; });
+    menu.append(h('div', 'gwc-menuhead', 'This ' + (isCh ? 'channel' : 'chat')));
+    item(mutedK[k] ? 'Unmute' : 'Mute (no notices, greyed out)', !!mutedK[k], () => { if (mutedK[k]) delete mutedK[k]; else mutedK[k] = true; }, 'sound_mute');
+    if (isCh) item('Ignore @everyone and @here', !!noEveryone[k], () => { if (noEveryone[k]) delete noEveryone[k]; else noEveryone[k] = true; });
+    menu.append(h('div', 'gwc-menuhead', 'Everywhere'));
+    item('Notification sounds', sounds, () => { sounds = !sounds; ls.set('chat-sound', sounds); if (sounds) pingSound(); }, sounds ? 'sound' : 'sound_mute');
+    if (hub.myStatus === 'dnd') menu.append(h('div', 'gwc-menunote', 'Do Not Disturb is on: no notices or sounds anywhere until you change your status.'));
+    openPop(menu, anchor);
+  }
+  $('[data-inbox]').onclick = (e) => openInbox(e.currentTarget);
+  $('[data-notif]').onclick = (e) => { if (view.kind !== 'friends') notifMenu(keyOf(), e.currentTarget); };
+  // A mention in a message opens that person's card.
+  logEl.addEventListener('click', (e) => { const m = e.target.closest?.('.gwc-mention[data-user]'); if (m) profileCard(m.dataset.user, m, m.dataset.user); });
+
   // ---- Popovers ----
   function openPop(content, anchor, kind = 'menu') {
     pop.className = 'dk gwc-pop gwc-pop-' + kind; pop.replaceChildren(content); pop.hidden = false;
@@ -496,34 +614,101 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
     pop.style.left = x + 'px'; pop.style.top = y + 'px';
   }
   function closePop() { pop.hidden = true; pop.replaceChildren(); }
-  const onDocDown = (e) => { if (!pop.hidden && !pop.contains(e.target) && !e.target.closest?.('.gwc-msgtools, [data-me] .dk-btn')) closePop(); };
+  const onDocDown = (e) => { if (!pop.hidden && !pop.contains(e.target) && !e.target.closest?.('.gwc-msgtools, [data-me] .dk-btn, [data-inbox], [data-notif]')) closePop(); };
   document.addEventListener('pointerdown', onDocDown, true);
 
   // ---- Composing ----
   function drawReplyBar() {
     replyBar.hidden = !replyTo && !editing;
     if (editing) replyBar.replaceChildren(h('span', null, si('pencil'), ' Editing message · Esc to cancel'), cancelBtn());
-    else if (replyTo) replyBar.replaceChildren(h('span', null, si('arrow_undo'), ' Replying to ', h('b', null, displayName(replyTo.account ? cachedProfile(replyTo.account) : null, replyTo.name))), cancelBtn());
+    else if (replyTo) {
+      const items = [h('span', null, si('arrow_undo'), ' Replying to ', h('b', null, displayName(replyTo.account ? cachedProfile(replyTo.account) : null, replyTo.name)))];
+      // Channels only (a private chat always tells the other person): ping the author of the message, or not.
+      if (view.kind === 'channel' && replyTo.account && replyTo.account !== myAccount()) {
+        const t = h('button', 'dk-btn gwc-rping' + (replyPing ? ' down' : ''), replyPing ? '@ On' : '@ Off'); t.type = 'button';
+        t.dataset.tip = replyPing ? `${displayName(cachedProfile(replyTo.account), replyTo.name)} gets a ping. Click to answer quietly.` : 'Answering without a ping. Click to ping them.';
+        t.onclick = () => { replyPing = !replyPing; ls.set('chat-replyping', replyPing); drawReplyBar(); text.focus(); };
+        items.push(t);
+      }
+      replyBar.replaceChildren(...items, cancelBtn());
+    }
   }
   function cancelBtn() { const b = h('button', 'dk-btn', 'Cancel'); b.type = 'button'; b.onclick = () => { if (editing) text.value = ''; replyTo = editing = null; drawReplyBar(); autosize(); }; return b; }
   function startEdit(m) { editing = m; replyTo = null; text.value = m.text; drawReplyBar(); autosize(); text.focus(); }
   const autosize = () => { text.style.height = 'auto'; text.style.height = Math.min(160, text.scrollHeight) + 'px'; };
-  text.addEventListener('input', () => { autosize(); if (text.value && view.kind !== 'friends' && !editing) hub.typing(whereOf()); });
+  // ---- @ suggestions: people here, friends, private chats, recent writers and (asked from the hub) any account ----
+  let sugg = { list: [], at: 0, q: null, start: 0 };
+  const found = new Map();   // prefix -> usernames from the hub
+  function people() {
+    const out = new Map(), add = (u, name) => { if (u && u !== myAccount() && !out.has(u)) out.set(u, name ?? u); };
+    if (view.kind === 'channel') for (const x of members.get(view.id)?.values() ?? []) add(x.account, x.name);
+    if (view.kind === 'dm') add(view.with);
+    for (const m of [...(logs.get(keyOf()) ?? [])].reverse()) add(m.account, m.name);
+    for (const f of hub.friends?.friends ?? []) add(f.user);
+    for (const c of convos) add(c.with);
+    for (const u of hub.presence?.keys() ?? []) add(u);
+    for (const list of found.values()) for (const u of list) add(u);
+    return out;
+  }
+  function updateSuggest() {
+    const upto = text.value.slice(0, text.selectionStart ?? text.value.length), m = /(^|[\s(])@([a-z0-9_]{0,20})$/i.exec(upto);
+    if (!m || text.disabled || !myAccount()) return closeSuggest();
+    const q = m[2].toLowerCase(), list = [];
+    if (q.length >= 1 && !found.has(q)) { found.set(q, []); hub.findUsers(q); }
+    for (const [u, name] of people()) {
+      const p = cachedProfile(u), dn = displayName(p, name ?? u).toLowerCase();
+      if (u.startsWith(q) || dn.startsWith(q) || (q.length >= 2 && dn.includes(q))) list.push({ u, p, name: name ?? u, rank: u.startsWith(q) ? 0 : dn.startsWith(q) ? 1 : 2 });
+    }
+    list.sort((a, b) => a.rank - b.rank || (presence(b.u).status !== 'offline') - (presence(a.u).status !== 'offline') || a.u.localeCompare(b.u));
+    const out = list.slice(0, 8);
+    if (hub.isAdmin && view.kind === 'channel') for (const w of ['everyone', 'here']) if (w.startsWith(q)) out.push({ u: w, special: true });
+    if (!out.length) return closeSuggest();
+    if (sugg.q !== q) sugg.at = 0;
+    sugg = { list: out, at: Math.min(sugg.at, out.length - 1), q, start: upto.length - m[2].length - 1 };
+    suggest.replaceChildren(h('div', 'gwc-suggesthead', q ? `People matching @${q}` : 'Mention someone'), ...out.map((x, i) => {
+      const b = h('button', i === sugg.at ? 'on' : null); b.type = 'button'; b.setAttribute('role', 'option');
+      if (x.special) b.append(si('bell'), h('b', null, '@' + x.u), h('small', null, x.u === 'everyone' ? 'Ping every account' : 'Ping everyone online in this channel'));
+      else { const av = withDot(avatarEl(x.p, x.name, 20), presence(x.u).status); b.append(av, h('b', null, displayName(x.p, x.name)), h('small', null, '@' + x.u)); if (!x.p) getProfile(x.u).then((p) => { if (p && !suggest.hidden) updateSuggest(); }); }
+      b.onpointerdown = (e) => { e.preventDefault(); pickSuggest(i); };
+      return b;
+    }));
+    suggest.hidden = false;
+  }
+  function pickSuggest(i = sugg.at) {
+    const x = sugg.list[i]; if (!x) return;
+    const end = text.selectionStart ?? text.value.length, ins = '@' + x.u + ' ';
+    text.value = text.value.slice(0, sugg.start) + ins + text.value.slice(end);
+    const at = sugg.start + ins.length; text.setSelectionRange(at, at); closeSuggest(); autosize(); text.focus();
+  }
+  function closeSuggest() { suggest.hidden = true; suggest.replaceChildren(); sugg.list = []; sugg.q = null; }
+  text.addEventListener('input', () => { autosize(); updateSuggest(); if (text.value && view.kind !== 'friends' && !editing) hub.typing(whereOf()); });
+  text.addEventListener('click', updateSuggest);
+  text.addEventListener('blur', () => setTimeout(closeSuggest, 100));
   text.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') e.stopPropagation();   // the launcher menu leaves typing alone; Esc may still close the window
+    if (!suggest.hidden && sugg.list.length) {
+      const n = sugg.list.length;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); sugg.at = (sugg.at + (e.key === 'ArrowDown' ? 1 : n - 1)) % n; updateSuggest(); return; }
+      // Enter sends when the name is already typed out in full; otherwise it (and Tab) picks the highlighted person.
+      if (e.key === 'Enter' && !e.shiftKey && sugg.list[sugg.at]?.u === sugg.q) closeSuggest();
+      else if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) { e.preventDefault(); pickSuggest(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeSuggest(); return; }
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
     else if (e.key === 'Escape' && (replyTo || editing)) { e.preventDefault(); e.stopPropagation(); if (editing) text.value = ''; replyTo = editing = null; drawReplyBar(); autosize(); }
     else if (e.key === 'ArrowUp' && !text.value) { const mine = [...(logs.get(keyOf()) ?? [])].reverse().find((m) => m.key === myKey() && m.id); if (mine) { e.preventDefault(); startEdit(mine); } }
   });
   text.addEventListener('keyup', (e) => e.stopPropagation());
+  let lastSent = null;   // given back to the composer if automod refuses it
   function send(attach, sticker) {
     const t = sticker ? '' : text.value.trim();
     if (!t && !attach && !sticker) return;
     if (editing) { if (t && t !== editing.text) hub.edit(whereOf(), editing.id, t); editing = null; }
     else {
-      const extra = { ...(replyTo?.id ? { reply: replyTo.id } : {}), ...(attach ? { attach } : {}), ...(sticker ? { sticker } : {}) };
+      const extra = { ...(replyTo?.id ? { reply: replyTo.id, ...(replyPing ? {} : { replyPing: false }) } : {}), ...(attach ? { attach } : {}), ...(sticker ? { sticker } : {}) };
       const ok = view.kind === 'channel' ? hub.say(view.id, t, extra) : hub.dm(view.with, t, extra);
       if (!ok) return;
+      lastSent = { k: keyOf(), text: t }; newSince.delete(keyOf());
       replyTo = null;
     }
     if (sticker) { drawReplyBar(); return; }   // what was being typed stays
@@ -556,13 +741,15 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
     openPicker(root, b, { tab: b.dataset.pick, onEmoji: insert, onSticker: (v) => send(null, v), onGif: (a) => send([a]), onUpload: () => $('[data-attach]').click(), onLink: importLink, postedGifs });
   };
   text.addEventListener('paste', (e) => { const f = [...(e.clipboardData?.files ?? [])].find((x) => /^image\//.test(x.type)); if (f && myAccount()) { e.preventDefault(); upload(f); } });
-  function sysNote(msg) { const k = keyOf(); if (k === 'friends') return; (logs.get(k) ?? logs.set(k, []).get(k)).push({ sys: msg, at: Date.now(), key: 'sys' }); drawLog(); }
+  function sysNote(msg, cls) { const k = keyOf(); if (k === 'friends') return; (logs.get(k) ?? logs.set(k, []).get(k)).push({ sys: msg, cls, at: Date.now(), key: 'sys' }); drawLog(); }
 
   // ---- Navigation ----
   function open(target) {
     // Private chats need an account. The page's own sign-in counts (the hub confirms it a moment after connecting).
     if (target.kind === 'dm' && !account()) { onEditProfile(); return; }
     view = target; ls.set('chat-view', view.kind === 'friends' ? { kind: 'friends', tab: view.tab } : view);
+    if (view.kind !== 'friends') { const k = keyOf(); if (unread(k)) newSince.set(k, read[k] ?? 0); else newSince.delete(k); }
+    closeSuggest();
     replyTo = editing = null; drawReplyBar(); closePop();
     if (view.kind === 'dm') { getProfile(view.with).then(() => { head(); drawNav(); }); if (!logs.has(keyOf())) hub.dmHistory(view.with); }
     if (view.kind === 'friends') hub.send({ t: 'friends' });
@@ -580,25 +767,26 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
   const keyFor = (m) => (m.room !== undefined ? 'c:' + m.room : 'd:' + (m.with ?? (m.from === hub.account ? m.to : m.from)));
   const findMsg = (k, id) => logs.get(k)?.find((x) => x.id === id);
   const notify = (k, title, body, icon) => {
-    if (hub.myStatus === 'dnd') return;
+    if (hub.myStatus === 'dnd' || mutedK[k] || level(k) === 'none') return;
     if (looking() && keyOf() === k) return;
+    if (sounds) pingSound();
     onNotify({ title, body, icon, open: () => { const v = k.startsWith('c:') ? { kind: 'channel', id: k.slice(2) } : { kind: 'dm', with: k.slice(2) }; open(v); } });
   };
   const offs = [
     hub.on('state', () => { placeholder(); drawNav(); }),
     hub.on('welcome', () => { placeholder(); drawNav(); }),
-    hub.on('authed', () => { if (hub.account) { hub.dms(); getProfile(hub.account).then(drawMe); } placeholder(); drawNav(); drawLog(); }),
+    hub.on('authed', () => { drawWall(); if (hub.account) { hub.dms(); getProfile(hub.account).then(drawMe); } placeholder(); drawNav(); drawLog(); }),
     hub.on('rooms', () => drawNav()),
     hub.on('room', (m) => {
       members.set(m.room, new Map(m.users.map((u) => [u.id, u])));
       logs.set('c:' + m.room, m.history.map(norm)); done.set('c:' + m.room, m.history.length < 100);
-      if (view.kind === 'channel' && view.id === m.room) { drawLog(); drawMembers(); }
+      if (view.kind === 'channel' && view.id === m.room) { drawLog(); drawMembers(); if (jump) tryJump(); }
       drawNav();
     }),
     hub.on('room-history', (m) => {
       loadingOlder = false; const k = 'c:' + m.room; done.set(k, m.done);
       if (m.messages.length) logs.get(k)?.unshift(...m.messages.map(norm));
-      if (keyOf() === k) drawLog({ keep: true });
+      if (keyOf() === k) { drawLog({ keep: true }); if (jump) tryJump(); }
     }),
     hub.on('joined', (m) => { members.get(m.room)?.set(m.user.id, m.user); if (view.id === m.room) drawMembers(); }),
     hub.on('left', (m) => { members.get(m.room)?.delete(m.user.id); if (view.id === m.room) drawMembers(); }),
@@ -607,14 +795,25 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
       const k = 'c:' + m.room, n = norm(m);
       (logs.get(k) ?? logs.set(k, []).get(k)).push(n);
       typing.get(k)?.delete(m.from.name);
-      const me = myAccount(), mentioned = me && new RegExp(`@${me}\\b`, 'i').test(m.text) && n.key !== myKey();
-      if (mentioned && !(looking() && keyOf() === k)) mentions.set(k, (mentions.get(k) ?? 0) + 1);
+      // Pings come separately (hub 'ping'); a channel set to all messages tells about every one.
+      if (level(k) === 'all' && n.key !== myKey() && !pingsMe(n)) notify(k, `${displayName(n.account ? cachedProfile(n.account) : null, n.name)} in #${channel(m.room)?.label ?? m.room}`, n.text || '(picture)');
       if (keyOf() === k) { const near = atBottom(); drawLog(); if (!near && n.key !== myKey()) scroll.scrollTop = scroll.scrollHeight - scroll.clientHeight - 200; if (near || n.key === myKey()) scroll.scrollTop = scroll.scrollHeight; }
       drawNav(); drawTyping();
     }),
-    hub.on('mention', (m) => {
-      const k = m.room !== undefined ? 'c:' + m.room : null;
-      if (k) notify(k, `${m.from.name} mentioned you in #${channel(m.room)?.label ?? m.room}`, m.text);
+    hub.on('ping', (m) => {
+      const k = 'c:' + m.room, who = displayName(m.from?.account ? cachedProfile(m.from.account) : null, m.from?.name ?? '?'), where = `#${channel(m.room)?.label ?? m.room}`;
+      if ((m.kind === 'everyone' || m.kind === 'here') && noEveryone[k]) return;
+      if (looking() && keyOf() === k && atBottom()) { markRead(k); hub.pingsSeen(); }
+      notify(k, m.kind === 'reply' ? `${who} answered you in ${where}` : m.kind === 'mention' ? `${who} mentioned you in ${where}` : `${who} pinged @${m.kind} in ${where}`, m.text);
+      drawNav(); drawInboxBadge();
+    }),
+    hub.on('pings', () => { drawNav(); drawInboxBadge(); }),
+    hub.on('pings-seen', () => drawInboxBadge()),
+    hub.on('found-users', (m) => { found.set(m.q, m.users); for (const u of m.users) getProfile(u); if (!suggest.hidden || document.activeElement === text) updateSuggest(); }),
+    // Automod refused a message: say why, and give back what was written.
+    hub.on('automod', (m) => {
+      sysNote(`Automod: ${m.reason} Only you can see this.`, 'automod');
+      if (lastSent && lastSent.k === keyOf() && !text.value && m.text) { text.value = m.text; autosize(); text.focus(); }
     }),
     hub.on('edited', (m) => { const x = findMsg(keyFor(m), m.id); if (x) { x.text = m.text; x.edited = m.edited; if (keyOf() === keyFor(m)) drawLog({ keep: true }); } }),
     hub.on('msg-deleted', (m) => { const k = keyFor(m), l = logs.get(k); if (!l) return; const i = l.findIndex((x) => x.id === m.id); if (i >= 0) { l.splice(i, 1); if (keyOf() === k) drawLog({ keep: true }); } }),
@@ -633,7 +832,7 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
       loadingOlder = false; const k = 'd:' + m.with, msgs = m.messages.map(norm);
       if (logs.has(k) && logs.get(k).length && msgs.length) logs.get(k).unshift(...msgs); else logs.set(k, msgs);
       done.set(k, m.done);
-      if (keyOf() === k) drawLog({ keep: logs.get(k).length > msgs.length });
+      if (keyOf() === k) { drawLog({ keep: logs.get(k).length > msgs.length }); if (jump) tryJump(); }
     }),
     hub.on('dm', (m) => {
       const other = m.from === hub.account ? m.to : m.from, k = 'd:' + other, n = norm(m);
@@ -641,7 +840,7 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
       typing.get(k)?.clear();
       const c = convos.find((x) => x.with === other); if (c) c.last = m; else convos.unshift({ with: other, last: m });
       convos.sort((a, b) => b.last.at - a.last.at);
-      if (m.from !== hub.account) { mentions.set(k, (looking() && keyOf() === k) ? 0 : (mentions.get(k) ?? 0) + 1); notify(k, displayName(cachedProfile(other), m.name), m.text || '(picture)'); }
+      if (m.from !== hub.account) { mentions.set(k, (looking() && keyOf() === k) ? 0 : (mentions.get(k) ?? 0) + 1); if (level(k) !== 'none') notify(k, displayName(cachedProfile(other), m.name), m.text || '(picture)'); }
       if (keyOf() === k) { const near = atBottom(); drawLog(); if (near || m.from === hub.account) scroll.scrollTop = scroll.scrollHeight; }
       drawNav(); drawTyping();
     }),
@@ -694,6 +893,6 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
     focus() { if (view.kind !== 'friends') text.focus({ preventScroll: true }); },
     // The overlay hides the app rather than destroying it, so unread counts keep going.
     visible(on) { shown = on; if (on) { drawLog({ keep: true }); scroll.scrollTop = scroll.scrollHeight; markRead(); drawNav(); } },
-    unreadCount() { let n = 0; for (const v of mentions.values()) n += v; return n; },
+    unreadCount() { let n = 0; for (const [k, v] of mentions) if (k.startsWith('d:')) n += v; for (const c of channels()) n += pingCount('c:' + c.name); return n; },
   };
 }

@@ -214,7 +214,7 @@ html:not(.dk-ready) .gwc-card { background: #6c6f72; border: 2px solid #555; }
 .gwc-banner { aspect-ratio: 3 / 1; width: 100%; background: #3d6fa8 center / cover no-repeat; outline: 1px solid rgba(0, 0, 0, .4); }
 .gwc-cardav { align-self: flex-start; margin: -32px 0 0 10px; }
 .gwc-cardav .gw-avatar { outline: 3px solid #fff; }
-.gwc-cardav .gwc-dot { width: 12px; height: 12px; right: -4px; bottom: -4px; }
+.gwc-cardav .gwc-dot { width: 14px; height: 14px; right: 4px; bottom: 4px; border-width: 3px; box-shadow: 0 0 0 1px rgba(0, 0, 0, .25); }   /* inside the picture's corner, not hanging off it */
 .gwc-cardbody { margin-top: 6px; padding: 6px 8px; border: 8px solid transparent; border-image: var(--dk-panel-bright) 16 fill / 8px; }
 html:not(.dk-ready) .gwc-cardbody { background: #fff; }
 .gwc-cardbody h3 { font: 700 18px var(--dk-large); }
@@ -259,3 +259,69 @@ html:not(.dk-ready) .gw-overlay > .dk-window > .gwc-pad { background: #9da1a5; }
 html:not(.dk-ready) .gw-overlay-badge { background: #fff5af; border: 1px solid #000; }
 .gw-overlay-badge[hidden] { display: none; }
 @media (prefers-reduced-motion: reduce) { .gwc-msg, .gwc-msg.flash, .gwc-pop, .gw-toast { animation: none; } }
+
+/* Account required: the wall over the whole app for guests */
+.gwc-wall { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; padding: 16px; background: rgba(40, 42, 46, .55); }
+.gwc-wall[hidden] { display: none; }
+.gwc-wallbox { width: min(420px, 100%); }
+.gwc-wallbox .dk-panel { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
+.gwc-wallbox p { margin: 0; white-space: normal; }
+.gwc-wallbox .dk-btn { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; }
+
+/* Pings */
+.gwc-mention { cursor: pointer; padding: 0 2px; border-radius: 3px; background: rgba(26, 98, 214, .1); }
+.gwc-mention:hover { background: rgba(26, 98, 214, .2); text-decoration: underline; }
+.gwc-mention.me, .gwc-mention.all { background: rgba(232, 160, 0, .2); }
+.gwc-msg.mentioned { box-shadow: inset 3px 0 0 #e8a000; }
+.gwc-newline { display: flex; align-items: center; margin: 6px 8px 2px; border-top: 1px solid var(--dk-red, #d22); }
+.gwc-newline span { margin: -8px 0 0 auto; padding: 0 4px; border-radius: 3px; background: var(--dk-red, #d22); color: #fff; font-size: 10px; font-weight: bold; line-height: 14px; }
+.gwc-navitem.muted { opacity: .55; }
+.gwc-navitem.muted .gwc-badge { opacity: 1; }
+.gwc-sys.automod { color: #a33; font-style: normal; padding: 3px 6px; border-left: 3px solid #c33; background: rgba(200, 40, 40, .07); }
+.gwc-rping { padding: 0 6px; font-weight: bold; }
+.gwc-replybar .gwc-rping { margin-left: auto; }
+.gwc-replybar .gwc-rping + .dk-btn { margin-left: 0; }
+.gwc-inboxbtn { position: relative; }
+.gwc-inboxbtn .gwc-badge { position: absolute; top: -5px; right: -6px; min-width: 14px; line-height: 13px; padding: 0 3px; pointer-events: none; }
+.gwc-inboxbtn .gwc-badge[hidden] { display: none; }
+.gwc-pop-inbox .gwc-inbox { width: min(400px, calc(100vw - 32px)); }
+.gwc-inbox .dk-title .dk-btn { margin-left: auto; padding: 0 6px; }
+.gwc-inboxlist { max-height: min(420px, 60vh); overflow-y: auto; padding: 4px; display: flex; flex-direction: column; gap: 2px; }
+.gwc-inboxrow { display: flex; gap: 6px; align-items: flex-start; padding: 4px; text-align: left; border-radius: 3px; }
+.gwc-inboxrow:hover { background: var(--dk-hover); }
+.gwc-inboxrow.new { box-shadow: inset 3px 0 0 #e8a000; background: rgba(232, 160, 0, .08); }
+.gwc-inboxtext { display: flex; flex-direction: column; min-width: 0; }
+.gwc-inboxtop { font-size: 12px; color: var(--dk-mid); }
+.gwc-inboxtop b { color: var(--dk-text, #222); }
+.gwc-inboxtop time { margin-left: 6px; font-size: 10px; }
+.gwc-inboxmsg { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.gwc-menuhead { margin: 6px 4px 2px; font-size: 10px; font-weight: bold; text-transform: uppercase; letter-spacing: .04em; color: var(--dk-mid); }
+.gwc-menunote { max-width: 220px; margin: 4px; font-size: 11px; color: var(--dk-mid); white-space: normal; }
+.gwc-notif > button.on { font-weight: bold; }
+
+/* @ suggestions above the message box */
+.gwc-compose { position: relative; }
+.gwc-suggest { position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: 4px; max-width: 420px; z-index: 4; }
+.gwc-suggest[hidden] { display: none; }
+.gwc-suggest > button { gap: 8px; }
+.gwc-suggest > button.on { background: var(--dk-sel); color: #fff; }
+.gwc-suggest > button.on small { color: #e8eefc; }
+.gwc-suggest small { margin-left: auto; color: var(--dk-mid); }
+.gwc-suggesthead { margin: 0 4px 3px; font-size: 10px; font-weight: bold; text-transform: uppercase; color: var(--dk-mid); }
+
+/* Profile card activity */
+.gwc-activity b { font-weight: bold; }
+.gwc-activity.quiet { flex-direction: row; align-items: center; gap: 5px; color: var(--dk-mid); }
+.gwc-tools [hidden] { display: none; }
+
+/* In-game voice HUD (web/overlay.js): the channel and who is talking, top left while the overlay is closed */
+.gw-voicehud { position: fixed; top: 10px; left: 10px; z-index: 2147482999; display: flex; flex-direction: column; gap: 1px; min-width: 150px; max-width: 240px; padding: 4px 6px;
+  border-radius: 4px; background: rgba(20, 22, 26, .62); color: #eee; font: 12px Tahoma, Verdana, sans-serif; pointer-events: none; text-shadow: 0 1px 1px #000; }
+.gw-voicehud[hidden] { display: none; }
+.gw-voicehud .si { width: 16px; height: 16px; image-rendering: pixelated; }
+.gw-vrow { display: flex; align-items: center; gap: 5px; min-width: 0; padding: 1px 2px; border-radius: 3px; opacity: .8; }
+.gw-vrow span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.gw-vrow.head { opacity: 1; font-weight: bold; padding-bottom: 3px; border-bottom: 1px solid rgba(255, 255, 255, .15); margin-bottom: 2px; }
+.gw-vrow.head small { margin-left: auto; padding-left: 8px; font-weight: normal; color: #bbb; white-space: nowrap; }
+.gw-vrow.talking { opacity: 1; color: #fff; box-shadow: inset 2px 0 0 #3cb043; background: rgba(60, 176, 67, .18); }
+.gw-vrow.bad { color: #f99; }

@@ -305,3 +305,15 @@ html:not(.dk-ready) .gw-toast { background: #fff5af; border: 1px solid #000; }
   #launcher .gwl-me span { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { #launcher .gwl-window, #launcher .gw-toast { transition: none; animation: none; } }
+
+/* Admin: Automod tab (web/admin.js) */
+#launcher .am-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px; margin: 4px 0 8px; }
+#launcher .am-box { display: flex; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid #d8d8d8; border-radius: 3px; background: rgba(255, 255, 255, .5); }
+#launcher .am-rule { display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
+#launcher .am-rule small, #launcher .am h3 small { font-weight: normal; color: var(--dk-mid); }
+#launcher .am h3 .am-rule { display: inline-flex; margin-left: 8px; font-size: 12px; }
+#launcher .am-num { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; }
+#launcher .am-num input { width: 70px; }
+#launcher .am-text { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--dk-mid); }
+#launcher .am-text textarea { width: 100%; box-sizing: border-box; resize: vertical; font: 12px monospace; }
+#launcher .am .bad { color: #c22; }

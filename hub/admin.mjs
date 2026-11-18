@@ -1,10 +1,10 @@
 // Admin panel backend: bans (by IP, browser or account), mutes, chat moderation, lobby control, hub status, and a terminal
-// on the Pi. Only accounts listed in ADMIN_USERS (default "neutro74") can use it, and only after unlocking with a code
-// from an authenticator app; the app's secret is created on the Pi itself (`node admin.mjs enroll <user>`), so knowing an
-// admin's password is not enough to enroll a new authenticator.
+// on the Pi. Only accounts listed in ADMIN_USERS (default "neutro74") can use it: a signed-in admin account gets an admin
+// session from /admin/unlock with no further code (the owner's choice, 2026-11-17: the panel lives in the launcher and should
+// just open). The authenticator code check below is no longer asked for; `node admin.mjs enroll` remains but is unused.
 //
 //   GET  /admin/whoami                 (account token)  -> {admin, enrolled}
-//   POST /admin/unlock {code}          (account token)  -> {token, expires}      then every call sends X-Admin: <token>
+//   POST /admin/unlock                 (account token)  -> {token, expires}      then every call sends X-Admin: <token>
 //   POST /admin/lock
 //   GET  /admin/state                                   -> status, online and recent players, bans, mutes, lobbies, log...
 //   POST /admin/<action> {...}                          -> ban, unban, mute, unmute, kick, delete, clear, announce,
@@ -182,12 +182,6 @@ export function createAdmin({ accounts, hub }) {
       if (route === 'unlock' && req.method === 'POST') {
         const u = accountOf(req);
         if (!u || !ADMINS.has(u)) return json(res, 403, { error: 'Not an admin account.' }, h), true;
-        if (!readTotp(u)) return json(res, 403, { error: 'No authenticator is set up for this account yet. It is set up on the Pi.' }, h), true;
-        const f = (fails.get(u) ?? []).filter((t) => now() - t < 900e3);
-        if (f.length >= 5) return json(res, 429, { error: 'Too many wrong codes. Wait 15 minutes.' }, h), true;
-        const b = await body(req);
-        if (!verifyCode(u, String(b.code ?? '').replace(/\s/g, ''))) { fails.set(u, [...f, now()]); audit(u, 'unlock-failed', { ip }); return json(res, 401, { error: 'Wrong code.' }, h), true; }
-        fails.delete(u);
         const token = crypto.randomBytes(32).toString('base64url');
         sessions.set(sha(token), { user: u, at: now(), seen: now(), ip, agent: String(req.headers['user-agent'] ?? '').slice(0, 160) });
         audit(u, 'unlock', { ip });

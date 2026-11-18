@@ -1,10 +1,12 @@
-// Admin panel (hub/admin.mjs): opened from the launcher's Admin entry, shown only to admin accounts. A full-window overlay in
-// the launcher's panel style with tabs for players, bans and mutes, chat, games, accounts, the hub itself, a terminal on
-// the Pi, and the audit log. Unlocking needs a code from the admin's authenticator app; the browser then stays unlocked
-// (localStorage) until Lock, or until the session is ended from the Hub tab of another unlocked browser.
+// Admin panel (hub/admin.mjs): the launcher's Admin tab, shown only to admin accounts, drawn in Derma like the rest of the
+// launcher. Sections for players, bans and mutes, chat, games, accounts, the hub itself, a terminal on the Pi, and the audit
+// log. A signed-in admin account gets its admin session from the hub straight away (no code).
+//   mountAdmin(el) -> { visible(on), destroy() }
 import { hubHttp } from './library.js';
 import { hubUrl } from './hub.js';
-import { account } from './account.js';
+import { account, authHeaders } from './account.js';
+import { loadEmotes } from './emote-picker.js';
+import { icon } from './derma.js';
 
 const KEY = 'garrys-wasm.admin-token';
 const ss = { get: () => { try { return localStorage.getItem(KEY); } catch { return null; } }, set: (v) => { try { if (v) localStorage.setItem(KEY, v); else localStorage.removeItem(KEY); } catch { /* blocked */ } } };
@@ -31,48 +33,34 @@ export async function isAdmin() {
   try { return (await api('whoami', { admin: false })).admin; } catch { return false; }
 }
 
-const TABS = [['players', 'Players'], ['bans', 'Bans & mutes'], ['chat', 'Chat'], ['games', 'Games'], ['accounts', 'Accounts'], ['hub', 'Hub'], ['term', 'Terminal'], ['audit', 'Audit log']];
+const TABS = [['players', 'Players', 'group'], ['bans', 'Bans & mutes', 'delete'], ['chat', 'Chat', 'comments'], ['games', 'Games', 'controller'], ['accounts', 'Accounts', 'user'], ['emotes', 'Emojis & stickers', 'emoticon_smile'], ['hub', 'Hub', 'server'], ['term', 'Terminal', 'application_xp_terminal'], ['audit', 'Audit log', 'page_white_text']];
 const DURATIONS = [['60', '1 hour'], ['1440', '1 day'], ['10080', '7 days'], ['43200', '30 days'], ['0', 'Forever']];
 
-export function openAdmin(root) {
-  const ov = document.createElement('div');
-  ov.className = 'admin-overlay';
-  ov.innerHTML = `<div class="panel admin">
-    <div class="panel-head"><span>Admin</span><small data-who></small><a href="#" class="lock" data-lock hidden>Lock</a><a href="#" class="x" data-close title="Close">✕</a></div>
-    <div class="tabs" data-tabs hidden>${TABS.map(([k, l]) => `<button type="button" data-tab="${k}">${l}</button>`).join('')}</div>
-    <div class="err" data-err hidden></div><div class="panel-body" data-body></div></div>`;
-  root.append(ov);
+export function mountAdmin(el) {
+  const ov = el;
+  ov.innerHTML = `<div class="adm">
+    <div class="adm-nav">${TABS.map(([k, l, ic]) => `<button type="button" class="dk-btn" data-tab="${k}"><img class="si" src="${icon(ic)}" alt="">${l}</button>`).join('')}<span class="adm-who dk-onGrey" data-who></span></div>
+    <div class="adm-err" data-err hidden></div><div class="dk-panel adm-body" data-body></div></div>`;
   const $ = (q) => ov.querySelector(q), body = $('[data-body]');
-  let tab = 'players', st = null, timer = null, term = null;
-  const close = () => { clearInterval(timer); term?.dispose(); ov.remove(); document.removeEventListener('keydown', onKey, true); };
-  const onKey = (ev) => { if (ev.key === 'Escape' && tab !== 'term') { ev.stopPropagation(); close(); } };
-  document.addEventListener('keydown', onKey, true);
-  $('[data-close]').onclick = (ev) => { ev.preventDefault(); close(); };
-  $('[data-lock]').onclick = async (ev) => { ev.preventDefault(); await api('lock', { method: 'POST' }).catch(() => {}); ss.set(null); term?.dispose(); term = null; unlockScreen(); };
+  let tab = 'players', st = null, timer = null, term = null, shown = true, retried = false;
   for (const b of ov.querySelectorAll('[data-tab]')) b.onclick = () => { if (tab === 'term' && b.dataset.tab !== 'term') { term?.dispose(); term = null; } tab = b.dataset.tab; draw(); };
-  $('[data-who]').textContent = account()?.user ?? '';
+  $('[data-who]').textContent = account() ? `Signed in as ${account().user}` : '';
 
-  function unlockScreen(msg = '') {
-    clearInterval(timer); $('[data-tabs]').hidden = true; $('[data-lock]').hidden = true;
-    body.innerHTML = `<form class="unlock" data-unlock>
-        <p>Enter the 6-digit code from your authenticator app to unlock the admin panel.</p>
-        <input inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="123 456" data-code>
-        <button class="btn-primary">Unlock</button><p class="hint" data-msg>${esc(msg)}</p></form>`;
-    const code = body.querySelector('[data-code]'); code.focus();
-    body.querySelector('[data-unlock]').onsubmit = async (ev) => {
-      ev.preventDefault();
-      try { const r = await api('unlock', { method: 'POST', body: { code: code.value.replace(/\s/g, '') }, admin: false }); ss.set(r.token); start(); }
-      catch (e) { body.querySelector('[data-msg]').textContent = e.message; code.select(); }
-    };
+  // The hub hands a signed-in admin account its session; a session it no longer knows is replaced once.
+  async function unlock() {
+    body.textContent = 'Opening…';
+    try { const r = await api('unlock', { method: 'POST', body: {}, admin: false }); ss.set(r.token); start(); }
+    catch (e) { body.textContent = e.message; }
   }
+  const unlockScreen = (msg) => { ss.set(null); if (!retried) { retried = true; unlock(); } else body.textContent = msg ?? 'The admin session ended.'; };
   async function refresh() {
     try { st = await api('state'); } catch (e) { if (e.status === 401) return unlockScreen(e.message); throw e; }
-    if (tab !== 'term') draw();
+    retried = false;
+    if (tab !== 'term' && tab !== 'emotes') draw();
   }
   function start() {
-    $('[data-tabs]').hidden = false; $('[data-lock]').hidden = false;
     refresh().catch((e) => { body.textContent = e.message; });
-    clearInterval(timer); timer = setInterval(() => { if (tab !== 'term' && !ov.querySelector('.dialog') && !(ov.contains(document.activeElement) && document.activeElement.matches('input, select, textarea')) && document.visibilityState === 'visible') refresh().catch(() => {}); }, 5000);
+    clearInterval(timer); timer = setInterval(() => { if (shown && tab !== 'term' && !ov.querySelector('.adm-veil') && !(ov.contains(document.activeElement) && document.activeElement.matches('input, select, textarea')) && document.visibilityState === 'visible') refresh().catch(() => {}); }, 5000);
   }
   const errEl = $('[data-err]');
   const showErr = (m) => { errEl.textContent = m; errEl.hidden = !m; };
@@ -84,7 +72,8 @@ export function openAdmin(root) {
 
   // Ban or mute someone: pick what to match (browser, address, account), how long and why.
   function dialog(kind, p) {
-    const d = document.createElement('form'); d.className = 'dialog';
+    const veil = document.createElement('div'); veil.className = 'adm-veil';
+    const d = document.createElement('form'); d.className = 'dialog dk-window pop';
     // The hub refuses local and tunnel addresses (everyone behind the tunnel would share them).
     const local = (ip) => /^(127\.|::1$|::ffff:127\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|10\.|192\.168\.|fd7a:)/.test(ip ?? '');
     // An address many different browsers come from (a school, a VPN, or the tunnel itself) is left unticked: banning it
@@ -93,19 +82,21 @@ export function openAdmin(root) {
     const opt = (k, label, v) => (!v ? '' : k === 'ip' && local(v) ? `<label class="off"><input type="checkbox" disabled> ${label} <code>${esc(v)}</code> <small>(local address, cannot be banned)</small></label>`
       : k === 'ip' && sharers(v) > 3 ? `<label><input type="checkbox" data-t="${k}"> ${label} <code>${esc(v)}</code> <small class="warn">shared by ${sharers(v)} browsers: banning it bans them all</small></label>`
       : `<label><input type="checkbox" data-t="${k}" checked> ${label} <code>${esc(v)}</code></label>`);
-    d.innerHTML = `<b>${kind === 'ban' ? 'Ban' : 'Mute'} ${esc(p.name ?? p.account ?? p.ip ?? '')}</b>
+    d.innerHTML = `<div class="dk-title"><img class="si" src="${icon(kind === 'ban' ? 'delete' : 'sound_mute')}" alt="">${kind === 'ban' ? 'Ban' : 'Mute'} ${esc(p.name ?? p.account ?? p.ip ?? '')}<span class="dk-tinfo"></span><button type="button" class="dk-wbtn close" data-cancel aria-label="Cancel"></button></div><div class="dk-panel">
       <div class="opts">${opt('device', 'This browser', p.device)}${opt('ip', 'Internet address', p.ip)}${opt('account', 'Account', p.account)}</div>
       <label>For <select data-min>${DURATIONS.map(([v, l]) => `<option value="${v}" ${v === (kind === 'ban' ? '0' : '60') ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label>Reason <input data-reason maxlength="200" placeholder="Shown to them"></label>
       <div class="row"><button class="btn-primary">${kind === 'ban' ? 'Ban' : 'Mute'}</button><button type="button" class="btn" data-cancel>Cancel</button></div>
-      <p class="hint">${kind === 'ban' ? 'A ban disconnects them and blocks chat, games and the Workshop from what is ticked. Clearing the browser or changing network gets around one part; ticking several helps.' : 'Muted players can stay but cannot chat, message, rename or host.'}</p>`;
-    ov.querySelector('.admin').append(d);
-    d.querySelector('[data-cancel]').onclick = () => d.remove();
+      <p class="hint">${kind === 'ban' ? 'A ban disconnects them and blocks chat, games and the Workshop from what is ticked. Clearing the browser or changing network gets around one part; ticking several helps.' : 'Muted players can stay but cannot chat, message, rename or host.'}</p></div>`;
+    veil.append(d); ov.querySelector('.adm').append(veil);
+    for (const c of d.querySelectorAll('[data-cancel]')) c.onclick = () => veil.remove();
+    veil.addEventListener('pointerdown', (e) => { if (e.target === veil) veil.remove(); });
+    d.querySelector('[data-reason]').focus();
     d.onsubmit = (ev) => {
       ev.preventDefault();
       const target = {}; for (const c of d.querySelectorAll('[data-t]')) if (c.checked) target[c.dataset.t] = p[c.dataset.t];
       if (!Object.keys(target).length) return;
-      act(kind, { target, minutes: +d.querySelector('[data-min]').value, reason: d.querySelector('[data-reason]').value, label: p.name ?? p.account ?? '' }, () => d.remove());
+      act(kind, { target, minutes: +d.querySelector('[data-min]').value, reason: d.querySelector('[data-reason]').value, label: p.name ?? p.account ?? '' }, () => veil.remove());
     };
   }
   const who = (p) => `${esc(p.name ?? '')}${p.account ? ` <span class="acct">@${esc(p.account)}</span>` : ''}`;
@@ -151,7 +142,7 @@ export function openAdmin(root) {
         <div class="row rooms">${st.rooms.map((x) => `<button type="button" class="btn ${x.name === room ? 'on' : ''}" data-room="${x.name}">#${x.name} <small>${x.users}</small></button>`).join('')}
           <button type="button" class="btn danger" data-clear>Clear #${esc(room)}</button></div>
         <div class="msgs">${r.messages.slice().reverse().map((m) => `<div><time>${new Date(m.at).toLocaleString()}</time> <b>${esc(m.from?.name)}</b>${m.from?.account ? ` <span class="acct">@${esc(m.from.account)}</span>` : ''} <span>${esc(m.text)}</span>
-          ${m.id ? `<button class="mini" data-del="${esc(m.id)}" title="Delete for everyone">✕</button>` : ''}</div>`).join('') || '<p class="none">No messages.</p>'}</div>`;
+          ${m.id ? `<button class="btn mini" data-del="${esc(m.id)}" data-tip="Delete for everyone"><img class="si" src="${icon('delete')}" alt="Delete"></button>` : ''}</div>`).join('') || '<p class="none">No messages.</p>'}</div>`;
       for (const b of body.querySelectorAll('[data-room]')) b.onclick = () => { views.room = b.dataset.room; draw(); };
       for (const b of body.querySelectorAll('[data-del]')) b.onclick = () => act('delete', { room, id: b.dataset.del });
       body.querySelector('[data-clear]').onclick = () => { if (confirm(`Hide every message in #${room} for everyone?`)) act('clear', { room }); };
@@ -181,14 +172,42 @@ export function openAdmin(root) {
           <tr><td>Pi</td><td>load ${s.load.map((x) => x.toFixed(2)).join(' ')} · ${size(s.sysMem.total - s.sysMem.free)} of ${size(s.sysMem.total)} used${s.temp ? ` · ${s.temp.toFixed(1)} °C` : ''} · up ${dur(s.sysUptime)}</td></tr>
         </table>
         <div class="row"><button class="btn danger" data-restart>Restart hub</button><span class="hint">Everyone reconnects by themselves within a few seconds.</span></div>
-        <h3>Unlocked admin browsers <small>${st.sessions.length}</small></h3>
-        <table class="grid"><tr><th>Browser</th><th>Unlocked</th><th>Last used</th><th></th></tr>${st.sessions.map((x) => `<tr><td><small>${esc(x.agent.replace(/^Mozilla\/5\.0 /, '') || '—')}</small><br><code>${esc(x.ip ?? '')}</code></td><td><small>${when(x.at)}</small></td><td><small>${ago(x.seen)}</small></td>
-          <td class="acts"><button class="btn" data-end="${esc(x.id)}">End</button></td></tr>`).join('')}</table>
-        <div class="row"><button class="btn danger" data-end-all>End every other session</button><span class="hint">Use this if you lose a device or unlocked a browser that is not yours. Ending this browser's session: Lock (top right).</span></div>
         <h3>Hub log</h3><pre class="logbox">${st.log.slice().reverse().map((l) => `<span class="${l.level}">${new Date(l.at).toLocaleTimeString()} ${esc(l.text)}</span>`).join('\n') || 'Nothing yet.'}</pre>`;
-      for (const b of body.querySelectorAll('[data-end]')) b.onclick = () => act('end-sessions', { id: b.dataset.end });
-      body.querySelector('[data-end-all]').onclick = () => { if (confirm('Lock every other browser that is unlocked as admin?')) act('end-sessions', {}); };
       body.querySelector('[data-restart]').onclick = () => { if (confirm('Restart the hub now?')) act('restart', {}, () => setTimeout(refresh, 4000)); };
+    },
+    // The server's own emojis and stickers (hub/emotes.mjs): everyone can use them in chat.
+    async emotes() {
+      const { list } = await loadEmotes(true);
+      const url = (x) => `${hubHttp()}emotes/img/${x.file}`;
+      const grid = (kind) => list.filter((x) => x.kind === kind).map((x) => `<div class="adm-emote ${kind}"><img src="${esc(url(x))}" crossorigin="anonymous" alt=""><b>${kind === 'emoji' ? ':' + esc(x.name) + ':' : esc(x.name)}</b><small>by ${esc(x.by)}</small><button class="btn mini" data-rm-emote="${esc(x.id)}" data-tip="Remove"><img class="si" src="${icon('delete')}" alt="Remove"></button></div>`).join('') || '<p class="none">None yet.</p>';
+      body.innerHTML = `<h3>Add an emoji or sticker</h3>
+        <form class="inline adm-emote-form" data-add-emote><select data-kind><option value="emoji">Emoji (shows in text as :name:)</option><option value="sticker">Sticker (sent on its own)</option></select>
+          <input data-name maxlength="32" placeholder="name (letters, digits, _)" spellcheck="false"><button type="button" class="btn" data-file>Choose picture…</button><button class="btn-primary">Add</button></form>
+        <p class="hint" data-emsg>PNG, GIF (animated is fine), WebP or JPEG. Emojis up to 256 KB, stickers up to 1 MB. Square pictures look best.</p>
+        <h3>Emojis <small>${list.filter((x) => x.kind === 'emoji').length}</small></h3><div class="adm-emotes">${grid('emoji')}</div>
+        <h3>Stickers <small>${list.filter((x) => x.kind === 'sticker').length}</small></h3><div class="adm-emotes">${grid('sticker')}</div>`;
+      const form = body.querySelector('[data-add-emote]'), msg = body.querySelector('[data-emsg]'), nameIn = form.querySelector('[data-name]');
+      let file = null;
+      form.querySelector('[data-file]').onclick = () => {
+        const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/png,image/gif,image/webp,image/jpeg';
+        i.onchange = () => { file = i.files[0] ?? null; if (file) { form.querySelector('[data-file]').textContent = file.name.slice(0, 24); if (!nameIn.value) nameIn.value = file.name.replace(/\.[a-z]+$/i, '').toLowerCase().replace(/[^a-z0-9_]+/g, '_').slice(0, 32); } };
+        i.click();
+      };
+      form.onsubmit = async (ev) => {
+        ev.preventDefault();
+        if (!file) { msg.textContent = 'Choose a picture first.'; return; }
+        msg.textContent = 'Uploading…';
+        try {
+          const r = await fetch(`${hubHttp()}emotes?` + new URLSearchParams({ kind: form.querySelector('[data-kind]').value, name: nameIn.value.trim().toLowerCase() }), { method: 'POST', headers: authHeaders(), body: file });
+          const j = await r.json().catch(() => ({})); if (!r.ok) throw Error(j.error ?? `Error ${r.status}`);
+          draw();
+        } catch (e) { msg.textContent = e.message; }
+      };
+      for (const b of body.querySelectorAll('[data-rm-emote]')) b.onclick = async () => {
+        if (!confirm('Remove this for everyone? Messages that used it show it as removed.')) return;
+        const r = await fetch(`${hubHttp()}emotes/${b.dataset.rmEmote}`, { method: 'DELETE', headers: authHeaders() });
+        if (!r.ok) showErr((await r.json().catch(() => ({}))).error ?? `Error ${r.status}`); else draw();
+      };
     },
     audit() {
       body.innerHTML = `<h3>Admin actions</h3><table class="grid"><tr><th>When</th><th>Who</th><th>What</th></tr>
@@ -227,12 +246,16 @@ export function openAdmin(root) {
     },
   };
   function draw() {
-    for (const b of ov.querySelectorAll('[data-tab]')) b.classList.toggle('on', b.dataset.tab === tab);
-    ov.querySelector('.admin').classList.toggle('terminal', tab === 'term');
+    for (const b of ov.querySelectorAll('[data-tab]')) b.classList.toggle('down', b.dataset.tab === tab);
+    ov.querySelector('.adm').classList.toggle('terminal', tab === 'term');
     if (!st && tab !== 'term') { body.textContent = 'Loading…'; return; }
     const keep = body.scrollTop;
     Promise.resolve(views[tab]()).catch((e) => { body.textContent = e.message; });
     body.scrollTop = keep;
   }
-  if (ss.get()) start(); else unlockScreen();
+  if (ss.get()) start(); else unlock();
+  return {
+    visible(on) { shown = on; if (on && st && tab !== 'term') refresh().catch(() => {}); },
+    destroy() { clearInterval(timer); term?.dispose(); term = null; ov.replaceChildren(); },
+  };
 }

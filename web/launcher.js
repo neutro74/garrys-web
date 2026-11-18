@@ -6,7 +6,10 @@
 
 import { sharedHub, hubStatus, playerId } from './hub.js';
 import { mountChat, chatStyles, STATUS } from './chat-app.js';
-import { myProfile, saveProfile, uploadImage, removeImage, resizeImage, avatarEl, imageUrl, displayName, nameHue, getProfile } from './profiles.js';
+import { myProfile, saveProfile, uploadImage, removeImage, resizeImage, avatarEl, imageUrl, displayName, nameHue, getProfile, cachedProfile } from './profiles.js';
+import { dermaReady, icon } from './derma.js';
+import { cropImage } from './crop.js';
+import { openPicker, emojiNode } from './emote-picker.js';
 import { prepareGameDir, syncCloud, gameDirName, stopWrites } from './cloud-sync.js';
 import { listSaves, saveEntries, deleteSave, writeSaveEntries } from './local-saves.js';
 import { shareSave, shareInfo, fetchShare, listShares, saveLink, shareThumb } from './save-share.js';
@@ -136,7 +139,8 @@ async function extendedInfo() {
 // open panels in the card's place (chat, the files this browser keeps, controls). The bottom strip is its NavBar,
 // with the graphics preset where the game has its gamemode chooser.
 const WHATS_NEW = [
-  ['Chat, rebuilt', 'Channels, private messages, replies, reactions, pictures, mentions and edits. Press Shift+Tab in game to chat without leaving it.'],
+  ['A launcher of its own', 'One window in GMod\'s own Derma style, with tabs for playing, saves, chat, friends and versions.'],
+  ['Chat, rebuilt', 'Channels, private messages, replies, pictures, mentions and edits. Press Shift+Tab in game to chat without leaving it.'],
   ['Friends', 'Add friends, see who is online and what they are playing, and message them from anywhere.'],
   ['Profiles', 'A picture, banner, name colour, about me and status, shown to everyone in chat.'],
   ['Saves everywhere', 'Signed in, your saves, dupes and game settings follow your account. Continue picks up your latest save.'],
@@ -234,7 +238,7 @@ function accountBox(box, onChange) {
 // Profile: the public profile other players see (picture, banner, display name, about me, status...) for accounts, then the
 // in-game name and player colour, then the account and Steam sign-ins. A preview card shows the profile as chat will.
 function previewCard(p, status) {
-  const wrap = document.createElement('div'); wrap.className = 'gwc pf-preview';
+  const wrap = document.createElement('div'); wrap.className = 'dk pf-preview';
   const card = document.createElement('div'); card.className = 'gwc-card';
   const banner = document.createElement('div'); banner.className = 'gwc-banner';
   if (p.bannerImg) banner.style.backgroundImage = `url("${imageUrl(p.bannerImg)}")`; else banner.style.background = p.banner || p.accent || `hsl(${nameHue(p.user)} 35% 30%)`;
@@ -244,7 +248,7 @@ function previewCard(p, status) {
   body.innerHTML = `<h3></h3><div class="gwc-handle"></div>${p.custom?.text || p.custom?.emoji ? '<div class="gwc-custom"></div>' : ''}${p.bio ? '<div class="gwc-sect">About me</div><p class="pf-bio"></p>' : ''}`;
   body.querySelector('h3').textContent = displayName(p, p.user);
   body.querySelector('.gwc-handle').textContent = `@${p.user}${p.pronouns ? ' · ' + p.pronouns : ''}`;
-  if (body.querySelector('.gwc-custom')) body.querySelector('.gwc-custom').textContent = `${p.custom.emoji ?? ''} ${p.custom.text ?? ''}`.trim();
+  if (body.querySelector('.gwc-custom')) body.querySelector('.gwc-custom').append(...(p.custom.emoji ? [emojiNode(p.custom.emoji, 18), ' '] : []), p.custom.text ?? '');
   if (p.bio) body.querySelector('.pf-bio').textContent = p.bio;
   card.append(banner, av, body); wrap.append(card);
   return wrap;
@@ -303,7 +307,7 @@ function publicProfile(pf, p, hub) {
     </div></div>
     <label class="field"><span>Display name</span><input data-k="display" maxlength="32" placeholder="${esc(p.user)}"></label>
     <label class="field"><span>Pronouns</span><input data-k="pronouns" maxlength="24" placeholder="optional"></label>
-    <div class="field"><span>Custom status</span><div class="row pf-custom"><input data-k="custom.emoji" maxlength="8" placeholder="🙂" class="pf-emoji"><input data-k="custom.text" maxlength="64" placeholder="What are you up to?"></div></div>
+    <div class="field"><span>Custom status</span><div class="row pf-custom"><button type="button" class="dk-btn pf-emoji" data-emoji data-tip="Pick a status emoji"></button><input data-k="custom.text" maxlength="64" placeholder="What are you up to?"></div></div>
     <label class="field top"><span>About me</span><textarea data-k="bio" maxlength="300" rows="3" placeholder="A few words about yourself"></textarea></label>
     <label class="field"><span>Favourite</span><input data-k="favorite" maxlength="48" placeholder="Map, gamemode or addon"></label>
     <label class="field top"><span>Links</span><textarea data-k="links" rows="2" placeholder="Up to 4 https:// links, one per line"></textarea></label>
@@ -323,13 +327,27 @@ function publicProfile(pf, p, hub) {
     });
   }
   for (const b of pf.querySelectorAll('[data-clear]')) b.onclick = () => { cur[b.dataset.clear] = ''; preview(); };
+  // The status emoji: the chat picker's Emojis tab (Unicode, the server's emojis, GMod icons); clicking it again clears it.
+  const emojiBtn = $('[data-emoji]');
+  const showEmoji = () => { emojiBtn.replaceChildren(cur.custom?.emoji ? emojiNode(cur.custom.emoji, 16) : Object.assign(new Image(), { src: icon('emoticon_smile'), className: 'si', alt: '' })); };
+  emojiBtn.onclick = () => {
+    if (cur.custom?.emoji) { cur.custom = { ...cur.custom, emoji: '' }; showEmoji(); preview(); return; }
+    const host = emojiBtn.closest('.dk-window') ?? document.body;
+    openPicker(host, emojiBtn, { emojiOnly: true, onEmoji: (v) => { cur.custom = { ...(cur.custom ?? {}), emoji: v }; showEmoji(); preview(); } });
+  };
+  showEmoji();
   const wrap = async (fn) => { msg.textContent = 'Saving…'; try { const p2 = await fn(); cur = { ...cur, avatar: p2.avatar, bannerImg: p2.bannerImg }; msg.textContent = 'Saved.'; preview(); } catch (e) { msg.textContent = e.message; } };
   for (const b of pf.querySelectorAll('[data-up]')) b.onclick = () => {
     const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*';
-    i.onchange = () => i.files[0] && wrap(async () => {
-      const kind = b.dataset.up, { blob } = await resizeImage(i.files[0], kind === 'avatar' ? { w: 256, h: 256, keepGifUnder: 500 * 1024 } : { w: 960, h: 320, keepGifUnder: 1.4 * 1048576 });
-      return uploadImage(kind, blob);
-    });
+    // Cropped first (web/crop.js; animated GIFs stay animated), then sent. The limits are the hub's (hub/profiles.mjs).
+    i.onchange = async () => {
+      const file = i.files[0]; if (!file) return;
+      const kind = b.dataset.up;
+      let blob;
+      try { blob = await cropImage(file, kind === 'avatar' ? { w: 256, h: 256, limit: 500 * 1024, title: 'Crop your picture' } : { w: 960, h: 320, limit: 1.45 * 1048576, title: 'Crop your banner' }); }
+      catch (e) { msg.textContent = e.message; return; }
+      if (blob) wrap(() => uploadImage(kind, blob));
+    };
     i.click();
   };
   for (const b of pf.querySelectorAll('[data-rm]')) b.onclick = () => wrap(() => removeImage(b.dataset.rm));
@@ -337,7 +355,7 @@ function publicProfile(pf, p, hub) {
     msg.textContent = 'Saving…';
     try {
       const saved = await saveProfile({ display: cur.display ?? '', pronouns: cur.pronouns ?? '', accent: cur.accent ?? '', banner: cur.banner ?? '', status: cur.status, bio: cur.bio ?? '',
-        custom: cur.custom ?? null, favorite: cur.favorite ?? '', links: cur.links ?? [] });
+        custom: cur.custom?.text || cur.custom?.emoji ? { text: cur.custom.text ?? '', emoji: cur.custom.emoji ?? '' } : null, favorite: cur.favorite ?? '', links: cur.links ?? [] });
       cur = structuredClone(saved); hub.myStatus = saved.status; msg.textContent = 'Saved. Everyone in chat sees it now.'; preview();
     } catch (e) { msg.textContent = e.message; }
   };
@@ -381,8 +399,8 @@ function savesPanel(el, { onPlaySave, highlight, sharedNote }) {
         e.target.disabled = true; msg.textContent = `Sharing ${sv.name}…`;
         try { const r = await shareSave(await saveEntries(sv.file), { name: sv.name }); showLink(row, saveLink(r.code)); msg.textContent = ''; } catch (err) { msg.textContent = err.message; e.target.disabled = false; }
       });
-      btn('⭳', 'btn', async () => { const blob = encodeBackup((await saveEntries(sv.file)).map(([p, b]) => ['/overlay/garrysmod/' + p, b])); const u = URL.createObjectURL(blob), a = document.createElement('a'); a.href = u; a.download = `${sv.name}.gwb`; a.click(); setTimeout(() => URL.revokeObjectURL(u), 60e3); }).title = 'Download (import it from the game\'s Saves page)';
-      btn('✕', 'btn', async () => { if (!confirm(`Delete the save “${sv.name}”?${account() ? ' It is removed from your account too.' : ''}`)) return; await deleteSave(sv.file); draw(); }).title = 'Delete';
+      btn('Download', 'btn', async () => { const blob = encodeBackup((await saveEntries(sv.file)).map(([p, b]) => ['/overlay/garrysmod/' + p, b])); const u = URL.createObjectURL(blob), a = document.createElement('a'); a.href = u; a.download = `${sv.name}.gwb`; a.click(); setTimeout(() => URL.revokeObjectURL(u), 60e3); }).title = 'Download (import it from the game\'s Saves page)';
+      btn('Delete', 'btn', async () => { if (!confirm(`Delete the save “${sv.name}”?${account() ? ' It is removed from your account too.' : ''}`)) return; await deleteSave(sv.file); draw(); }).title = 'Delete';
       row.append(img, info, btns);
       list.append(row);
     }
@@ -451,7 +469,7 @@ function versionsPanel(el, { ext, onPlay, highlight }) {
         <p class="hint">A version is an edition with your own choice of Workshop addons. Share one as a link and friends get the same setup.</p>
         <div class="vlist">${list.length ? list.map((v) => `<div class="vrow${v.id === highlight ? ' hl' : ''}" data-v="${v.id}">
           <div class="vinfo"><b>${esc(v.name)}</b>${v.author ? ` <small>by ${esc(v.author)}</small>` : ''}<div><small>${esc(versionLine(v))}</small> ${badge(versionSize(v), v.addons.length)}</div></div>
-          <div class="vbtns"><button class="btn-primary" data-act="play">Play</button><button class="btn" data-act="edit">Edit</button>${hubHttp() ? '<button class="btn" data-act="share">Share</button>' : ''}<button class="btn" data-act="del" title="Delete">✕</button></div>
+          <div class="vbtns"><button class="btn-primary" data-act="play">Play</button><button class="btn" data-act="edit">Edit</button>${hubHttp() ? '<button class="btn" data-act="share">Share</button>' : ''}<button class="btn" data-act="del">Delete</button></div>
           <div class="vshare" hidden></div></div>`).join('') : '<p class="hint">No versions yet.</p>'}</div>
         <div class="row"><button class="btn-primary" data-new>New version</button>${hubHttp() ? '<button class="btn" data-import>Open a shared link…</button>' : ''}</div>
         <p class="hint" data-msg>${esc(note)}</p></div>`;
@@ -488,7 +506,7 @@ function versionsPanel(el, { ext, onPlay, highlight }) {
         <label class="field"><span>Name</span><input data-name maxlength="48" value="${esc(v.name)}" placeholder="My mod pack"></label>
         <div class="field"><span>Edition</span><div class="seg">${(ext ? ['base', 'extended'] : ['base']).map((e) => `<button type="button" data-ed2="${e}" class="${v.edition === e ? 'on' : ''}">${EDITIONS[e].short}</button>`).join('')}</div></div>
         <div class="field top"><span>Addons</span><div class="addons">
-          ${v.addons.length ? v.addons.map((a, i) => `<div class="arow"><span title="${esc(a.title || a.name)}">${esc(a.title || a.name)}</span><small>${a.size ? fmtSize(a.size) : ''}</small>${a.size ? badge(a.size, 1) : ''}<a href="#" data-rm="${i}" title="Remove">✕</a></div>`).join('') : '<small class="muted">None yet. Search the Workshop below.</small>'}
+          ${v.addons.length ? v.addons.map((a, i) => `<div class="arow"><span title="${esc(a.title || a.name)}">${esc(a.title || a.name)}</span><small>${a.size ? fmtSize(a.size) : ''}</small>${a.size ? badge(a.size, 1) : ''}<a href="#" data-rm="${i}">Remove</a></div>`).join('') : '<small class="muted">None yet. Search the Workshop below.</small>'}
           <div class="total">${v.addons.length ? `Total ${fmtSize(total)} · ${badge(total, v.addons.length)}` : ''}</div></div></div>
         <div class="field top"><span>Add</span><div class="addons">
           <form data-search class="say" style="padding:0;background:none;border:0"><input data-q placeholder="Search the Workshop, or paste a link" value="${esc(searching)}"><button class="btn">Search</button></form>
@@ -545,175 +563,257 @@ async function fetchVersionAddons(v) {
   }
 }
 
+// The menu is one Derma window (web/derma.js: GMod's own skin and Silkicons) with tabs, over the drifting backgrounds.
+// Play has Continue, the editions, versions and quality; the other tabs hold the panels above and the chat app.
+const releaseName = () => /\/(v\d+)\//.exec(location.pathname)?.[1] ?? 'dev';
+function cat(title, iconName, { shut = false, badge = false } = {}) {
+  const c = document.createElement('div'); c.className = 'dk-cat' + (shut ? ' shut' : '');
+  c.innerHTML = `<button type="button" class="dk-cat-head"><img class="si" alt=""><span></span>${badge ? '<b class="dk-badge" hidden></b>' : ''}</button><div class="dk-cat-body"><div></div></div>`;
+  c.querySelector('img').src = icon(iconName); c.querySelector('span').textContent = title;
+  c.querySelector('.dk-cat-head').onclick = () => c.classList.toggle('shut');
+  return { el: c, body: c.querySelector('.dk-cat-body > div'), title: c.querySelector('span') };
+}
+
 function menu(ext, backdrop, opts = {}) {
   return new Promise((resolve) => {
     const ids = ext ? ['base', 'extended'] : ['base'];
     let edition = ids.includes(store.get('edition')) ? store.get('edition') : 'base';
     let quality = store.get('quality', (navigator.hardwareConcurrency ?? 8) <= 4 ? 'perf' : 'sharp');
     if (!QUALITY[quality]) quality = 'std';
-    const warn = problems(), single = ids.length === 1, hub = sharedHub();
+    const warn = problems(), hub = sharedHub();
     // Garry's Web is a fan project: say so, and whose the game is.
     const legal = `Garry's Web is an unofficial fan project, not affiliated with Facepunch Studios or Valve. ${ext ? "Garry's Mod and the bundled games belong to Facepunch Studios and Valve; addons belong to their Workshop authors." : "Garry's Mod belongs to Facepunch Studios and Valve."}`;
-    const extras = [['about', 'About'], ['saves', 'Saves'], ['versions', 'Game Versions'], ['chat', 'Chat'], ['friends', 'Friends'], ['profile', 'Profile'], ['files', 'Your Files'], ['controls', 'Controls'], ['fullscreen', 'Fullscreen']]
-      .filter(([k]) => (k !== 'chat' && k !== 'friends') || hub.url);
+    const TABS = [['play', 'Play', 'controller'], ['saves', 'Saves', 'disk'], ...(hub.url ? [['chat', 'Chat', 'comments'], ['friends', 'Friends', 'group']] : []),
+      ['versions', 'Versions', 'package'], ['profile', 'Profile', 'user'], ['options', 'Options', 'cog']];
 
-    const page = document.createElement('div');
-    page.className = 'page';
-    page.innerHTML = `
-      <div class="options"><ul>
-        <li class="logo"><img src="${brand('logo@2x.png')}" alt="Garry's Web" width="288" height="128"></li>
-        <li class="gap"></li>
-        <li class="cont" data-continue hidden></li>
-        ${ids.map((id) => `<li><a href="#" data-ed="${id}">${single ? 'Start Game' : EDITIONS[id].item}</a></li>`).join('')}
-        ${versions().filter((v) => ids.includes(v.edition)).slice(-4).reverse().map((v) => `<li class="ver"><a href="#" data-gv="${v.id}">${esc(v.name)} <small>${esc(versionLine(v))}</small></a></li>`).join('')}
-        <li class="gap small"></li>
-        ${extras.map(([k, label]) => `<li class="sub"><a href="#" data-open="${k}">${label}${k === 'chat' ? '<small data-online></small><b class="mbadge" data-chatbadge hidden></b>' : k === 'friends' ? '<small data-friends></small><b class="mbadge" data-friendbadge hidden></b>' : ''}</a></li>`).join('')}
-        ${warn.length ? `<li class="gap"></li>${warn.map((w) => `<li><span class="note warn">${esc(w)}</span></li>`).join('')}` : ''}
-      </ul></div>
-      <div class="side">
-        <div class="news"><div class="news_item" data-news><div><span data-news-title></span><font data-news-text></font></div></div>
-          <div class="news_buttons">${[...ids, 'about'].reverse().map((id) => `<div data-pager="${id}" title="${esc((EDITIONS[id] ?? ABOUT).short)}"></div>`).join('')}</div>
-          <div class="whatsnew"><div class="whatsnew_head"><img src="${game('html/img/whatsnew.png')}" alt="">What's new</div>
-            <ul>${WHATS_NEW.map(([t, d]) => `<li><b>${esc(t)}</b> ${esc(d)}</li>`).join('')}</ul></div></div>
-        <div class="panel" data-panel hidden></div>
+    const win = document.createElement('div');
+    win.className = 'dk dk-window gwl-window' + (reducedMotion ? '' : ' pop');
+    win.setAttribute('role', 'dialog'); win.setAttribute('aria-label', "Garry's Web");
+    win.innerHTML = `
+      <div class="dk-title"><img src="${brand('icon-32.png')}" alt="">Garry's Web
+        <span class="dk-tinfo"><span data-credit></span><img class="si" src="${icon('bullet_green')}" alt="" data-onlinedot hidden><span data-online></span><span>· ${esc(releaseName())}</span></span>
+        <button type="button" class="dk-wbtn maxi" data-fs data-tip="Fullscreen" aria-label="Fullscreen"></button></div>
+      <div class="dk-sheet">
+        <div class="dk-tabs" role="tablist">${TABS.map(([k, label, ic]) => `<button type="button" role="tab" class="dk-tab" data-tab="${k}"><img class="si" src="${icon(ic)}" alt="">${label}${k === 'chat' || k === 'friends' ? `<b class="dk-badge" data-badge="${k}" hidden></b>` : ''}</button>`).join('')}
+          <button type="button" class="dk-btn gwl-me" data-me data-tip="Your profile"></button></div>
+        <div class="dk-tabbody">${TABS.map(([k]) => `<section class="dk-page" data-page="${k}" role="tabpanel" hidden></section>`).join('')}</div>
       </div>`;
-    const nav = document.createElement('div');
-    nav.className = 'navbar';
-    nav.innerHTML = `<div class="info"><div data-credit>&nbsp;</div><div class="legal">${esc(legal)}</div></div>
-      <button class="button" data-gfx aria-haspopup="true"><img src="${game('html/img/settings.png')}" alt=""><span data-gfx-label></span></button>
-      <ul class="popup" data-gfx-menu hidden>${Object.entries(QUALITY).map(([k, q]) => `<li tabindex="0" data-q="${k}"><img src="${game('html/img/settings.png')}" alt="">${q.label}<small>${q.size}</small></li>`).join('')}</ul>`;
-    // Top right: who is signed in (picture, name, status), opening Profile; for guests, a prompt to sign in.
-    const version = document.createElement('button');
-    version.className = 'version me-chip'; version.type = 'button';
-    version.title = 'Your profile';
-    root.append(page, nav, version);
-    const drawChip = async () => {
-      const a = account(), p = a ? await getProfile(a.user).catch(() => null) : null, st = hub.myStatus ?? p?.status ?? 'online';
-      const av = document.createElement('span'); av.className = 'gwc-av'; av.append(avatarEl(p, a ? a.user : hub.name, 28));
-      if (a) { const dot = document.createElement('i'); dot.className = `gwc-dot s-${st === 'invisible' ? 'offline' : st}`; av.append(dot); }
-      const t = document.createElement('span'); t.className = 'chip-text';
-      t.innerHTML = `<b></b><small></small>`; t.querySelector('b').textContent = a ? displayName(p, a.user) : 'Not signed in';
-      t.querySelector('small').textContent = a ? (p?.custom?.text ? `${p.custom.emoji ?? ''} ${p.custom.text}` : STATUS[st]?.[0] ?? '') : 'Sign in to keep saves and chat with friends';
-      version.replaceChildren(av, t);
-    };
-    chatStyles(); drawChip();
-    version.onclick = () => openPanel('profile');
-    backdrop.onChange = (c) => { nav.querySelector('[data-credit]').innerHTML = `Background: “<b>${esc(c.title)}</b>” by ${esc(c.author)}`; };
+    root.append(win);
+    const $ = (q) => win.querySelector(q), page = (k) => $(`[data-page="${k}"]`);
+
+    // ---- Title bar and account button ----
+    backdrop.onChange = (c) => { $('[data-credit]').textContent = `“${c.title}” by ${c.author} ·`; };
     if (backdrop.current) backdrop.onChange(credit(backdrop.current));
-
-    const $ = (q) => root.querySelector(q), popup = $('[data-gfx-menu]'), panelEl = $('[data-panel]'), newsEl = $('.news');
-    // How many people are in chat, next to its menu entry (one status request, no socket until the panel opens).
-    const onlineEl = $('[data-online]'), friendsEl = $('[data-friends]');
-    const showOnline = (n) => { if (onlineEl) onlineEl.textContent = n ? ` ${n} online` : ''; };
-    if (onlineEl) hubStatus(hub.url).then((s) => showOnline(s?.online));
-    const showFriends = () => {
-      const f = hub.friends; if (!friendsEl || !f) return;
-      const on = f.friends.filter((x) => hub.presence?.has(x.user)).length;
-      friendsEl.textContent = on ? ` ${on} online` : '';
-      const b = $('[data-friendbadge]'); b.hidden = !f.incoming.length; b.textContent = f.incoming.length;
+    const showOnline = (n) => { $('[data-online]').textContent = n ? `${n} online` : ''; $('[data-onlinedot]').hidden = !n; };
+    if (hub.url) hubStatus(hub.url).then((s) => showOnline(s?.online));
+    const fsBtn = $('[data-fs]');
+    fsBtn.onclick = () => { if (document.fullscreenElement) document.exitFullscreen?.(); else document.documentElement.requestFullscreen?.().catch(() => {}); };
+    const fsLabel = () => { fsBtn.dataset.tip = document.fullscreenElement ? 'Leave fullscreen' : 'Fullscreen'; };
+    document.addEventListener('fullscreenchange', fsLabel);
+    const drawMe = async () => {
+      const a = account(), p = a ? await getProfile(a.user).catch(() => null) : null, st = hub.myStatus ?? p?.status ?? 'online';
+      const dot = { online: 'bullet_green', idle: 'bullet_yellow', dnd: 'bullet_red', invisible: 'bullet_black' }[st] ?? 'bullet_green';
+      $('[data-me]').innerHTML = a ? `<img class="si" src="${icon(dot)}" alt=""><img class="si" src="${icon('user')}" alt=""><span></span>` : `<img class="si" src="${icon('user_add')}" alt=""><span>Sign in</span>`;
+      if (a) $('[data-me] span').textContent = displayName(p, a.user);
+      $('[data-me]').dataset.tip = a ? `${STATUS[st]?.[0] ?? ''} · your profile` : 'Sign in to keep saves and chat with friends';
     };
-    const hubOffs = [hub.on('welcome', (m) => showOnline(m.online)), hub.on('friends', showFriends), hub.on('presence', showFriends), hub.on('presence-list', showFriends), hub.on('my-status', drawChip), hub.on('profile', (m) => { if (m.user === account()?.user) drawChip(); })];
-    // Signed in: connected from the start, so friends, private messages and notices arrive while the menu is open.
-    if (hub.url && account()) { hub.setActivity({ kind: 'launcher', detail: 'In the launcher' }); hub.connect(); }
+    $('[data-me]').onclick = () => show('profile');
+    drawMe();
 
-    // Chat (web/chat-app.js) opens in a large window over the menu and stays alive when closed, so notices keep coming.
-    let chat = null, chatWrap = null;
-    const toasts = document.createElement('div'); toasts.className = 'gw-toasts'; root.append(toasts);
+    // ---- Tabs ----
+    let tab = null, adminMount = null;
+    const drawn = new Set();
+    function show(k) {
+      if (k === tab) { if (k === 'saves' || k === 'versions' || k === 'options') fill(k); return; }
+      tab = k;
+      for (const b of win.querySelectorAll('[data-tab]')) { b.classList.toggle('on', b.dataset.tab === k); b.setAttribute('aria-selected', String(b.dataset.tab === k)); }
+      for (const p of win.querySelectorAll('[data-page]')) p.hidden = p.dataset.page !== k;
+      if (k === 'chat' || k === 'friends') {
+        ensureChat(); page(k).append(chatEl);
+        chat.open(k === 'friends' ? { kind: 'friends', tab: hub.friends?.incoming?.length ? 'pending' : 'online' } : chat.lastRoom?.() ?? { kind: 'channel', id: 'general' });
+        chat.visible(true); chat.focus();
+      } else chat?.visible(false);
+      if (k === 'admin') adminMount?.(); else admin?.visible(false);
+      badges();
+      if (!drawn.has(k) || k === 'saves' || k === 'options') fill(k);
+    }
+    function fill(k) {
+      drawn.add(k);
+      const el = page(k);
+      if (k === 'play') return;
+      if (k === 'options') return drawOptions(el);
+      if (k === 'chat' || k === 'friends' || k === 'admin') return;
+      el.replaceChildren(); const p = document.createElement('div'); p.className = 'panel gwl-panel'; el.append(p);
+      if (k === 'saves') savesPanel(p, { highlight: opts.highlightSave, sharedNote: opts.sharedNote, onPlaySave: (file) => play(edition, null, file) });
+      else if (k === 'versions') versionsPanel(p, { ext, highlight: opts.highlight, onPlay: (v) => play(v.edition, v) });
+      else if (k === 'profile') profilePanel(p, hub, (why) => { if (why === 'close') fill('profile'); else relaunch('profile'); });
+    }
+    for (const b of win.querySelectorAll('[data-tab]')) b.onclick = () => show(b.dataset.tab);
+
+    // ---- Play ----
+    const playEl = page('play');
+    playEl.innerHTML = `<div class="gwl-play">
+      <div class="gwl-left">
+        <div class="dk-panel gwl-cont" data-cont hidden></div>
+        ${warn.length ? `<div class="dk-panel gwl-warn">${warn.map((w) => `<p><img class="si" src="${icon('error')}" alt=""> ${esc(w)}</p>`).join('')}</div>` : ''}
+        <div class="gwl-games">${ids.map((id) => `<button type="button" class="gwl-game" data-ed="${id}"><span class="pic" style="background-image:url('${game(EDITIONS[id].picture)}')"></span>
+          <span class="cap"><b>${esc(EDITIONS[id].name)}</b><span>${id === 'base' ? 'The stock sandbox · gm_construct, gm_flatgrass' : `${esc(EDITIONS.extended.games.slice(1, 5).join(', '))}, ${EDITIONS.extended.addons.length} addons`}</span><span class="dk-btn blue go">Play</span></span></button>`).join('')}</div>
+        <div class="gwl-quality dk-onGrey"><img class="si" src="${icon('monitor')}" alt="">3D quality
+          <span class="gwl-qbtns">${Object.entries(QUALITY).map(([k, q]) => `<button type="button" class="dk-btn" data-q="${k}">${q.label}</button>`).join('')}</span><small data-qnote></small></div>
+      </div>
+      <div class="gwl-right" data-right></div></div>`;
+    const right = playEl.querySelector('[data-right]');
+    // The Garry's Web banner (web/brand/banner.png) heads the column; it opens About.
+    const banner = document.createElement('button'); banner.type = 'button'; banner.className = 'gwl-banner'; banner.dataset.tip = "About Garry's Web";
+    banner.innerHTML = `<img src="${brand('banner.png')}" alt="Garry's Web">`; right.append(banner);
+    // Friends who are online (signed in only), the player's game versions, what's new, about, controls.
+    let friendsCat = null;
+    if (hub.url && account()) { friendsCat = cat('Friends online', 'group', { badge: true }); right.append(friendsCat.el); }
+    const vs = versions().filter((v) => ids.includes(v.edition)).slice(-5).reverse();
+    if (vs.length) {
+      const c = cat('Your game versions', 'package'); right.append(c.el);
+      for (const v of vs) {
+        const r = document.createElement('div'); r.className = 'dk-row'; r.innerHTML = '<img class="si" alt=""><span class="gwl-ell"></span><small></small><button type="button" class="dk-btn act">Play</button>';
+        r.querySelector('img').src = icon('package'); r.querySelector('span').textContent = v.name; r.querySelector('small').textContent = versionLine(v);
+        r.querySelector('button').onclick = () => play(v.edition, v); c.body.append(r);
+      }
+    }
+    const news = cat("What's new", 'newspaper'); right.append(news.el);
+    news.body.innerHTML = WHATS_NEW.map(([t, d]) => `<p class="dk-p"><b>${esc(t)}</b><span>${esc(d)}</span></p>`).join('');
+    banner.onclick = () => openAbout();
+    const keys = cat('Controls', 'keyboard', { shut: true }); right.append(keys.el);
+    keys.body.innerHTML = CONTROLS.map(([k, v]) => `<div class="dk-row"><kbd>${esc(k)}</kbd><small>${esc(v)}</small></div>`).join('');
+
+    const drawFriends = () => {
+      if (!friendsCat) return;
+      const f = hub.friends, on = f ? f.friends.filter((x) => (hub.presence?.get(x.user)?.status ?? 'offline') !== 'offline') : [];
+      friendsCat.title.textContent = `Friends online (${on.length})`;
+      const b = friendsCat.el.querySelector('.dk-badge'); b.hidden = !f?.incoming?.length; b.textContent = f?.incoming?.length ?? ''; b.dataset.tip = 'Friend requests';
+      friendsCat.body.replaceChildren();
+      if (!on.length) { const p = document.createElement('p'); p.className = 'dk-p'; p.innerHTML = `<span>${f ? 'Nobody online right now.' : 'Connecting…'}</span>`; friendsCat.body.append(p); }
+      for (const x of on) {
+        const pr = hub.presence.get(x.user), r = document.createElement('div'); r.className = 'dk-row';
+        r.innerHTML = '<img class="si" alt=""><span class="gwl-ell"></span><small></small><button type="button" class="dk-btn act">Message</button>';
+        r.querySelector('img').src = icon(pr.status === 'idle' ? 'bullet_yellow' : pr.status === 'dnd' ? 'bullet_red' : 'bullet_green');
+        r.querySelector('span').textContent = displayName(cachedProfile(x.user), x.user); r.querySelector('small').textContent = pr.activity?.detail ?? '';
+        r.querySelector('button').onclick = () => { show('chat'); chat.open({ kind: 'dm', with: x.user }); };
+        friendsCat.body.append(r);
+      }
+    };
+    const drawQuality = () => {
+      for (const b of playEl.querySelectorAll('[data-q]')) b.classList.toggle('down', b.dataset.q === quality);
+      playEl.querySelector('[data-qnote]').textContent = QUALITY[quality].size;
+    };
+    for (const b of playEl.querySelectorAll('[data-q]')) b.onclick = () => { quality = b.dataset.q; store.set('quality', quality); drawQuality(); };
+    for (const b of playEl.querySelectorAll('[data-ed]')) b.onclick = () => play(b.dataset.ed);
+    drawQuality();
+
+    // Continue: the newest save, one click back into it.
+    listSaves().then((saves) => {
+      const sv = saves[0], box = playEl.querySelector('[data-cont]');
+      if (!sv || went) return;
+      box.hidden = false;
+      box.innerHTML = `<div class="shot"></div><div class="gwl-cinfo"><div class="gwl-label">Continue where you left off</div><h1></h1>
+        <div class="gwl-meta"><span><img class="si" src="${icon('disk')}" alt=""><span data-when></span></span><span><img class="si" src="${icon('controller')}" alt="">${esc(EDITIONS[edition].short)}</span></div>
+        <div class="gwl-cbtns"><button type="button" class="dk-btn big blue" data-go><img class="si" src="${icon('controller')}" alt="">Continue</button><button type="button" class="dk-btn big" data-others><img class="si" src="${icon('disk')}" alt="">Other saves</button></div></div>`;
+      box.querySelector('h1').textContent = sv.name;
+      box.querySelector('[data-when]').textContent = new Date(sv.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+      if (sv.thumb) { const u = URL.createObjectURL(sv.thumb); box.querySelector('.shot').style.backgroundImage = `url("${u}")`; }
+      else box.querySelector('.shot').classList.add('none');
+      box.querySelector('[data-go]').onclick = () => play(edition, null, sv.file);
+      box.querySelector('[data-others]').onclick = () => show('saves');
+    }).catch(() => {});
+
+    // About: a small Derma window over the launcher (the banner opens it), closed by its buttons, Esc or a click outside.
+    function openAbout() {
+      if (root.querySelector('.gwl-about')) return;
+      const veil = document.createElement('div'); veil.className = 'dk gwl-about';
+      veil.innerHTML = `<div class="dk-window pop" role="dialog" aria-label="About Garry's Web"><div class="dk-title"><img src="${brand('icon-32.png')}" alt="">About Garry's Web<span class="dk-tinfo"></span>
+          <button type="button" class="dk-wbtn close" data-x data-tip="Close (Esc)" aria-label="Close"></button></div>
+        <div class="dk-panel"><img class="gwl-about-banner" src="${brand('banner.png')}" alt="Garry's Web"><p>${ABOUT.blurb()}</p><p class="gwl-legal">${esc(legal)}</p>
+          <div class="gwl-cbtns"><a class="dk-btn blue" href="${ABOUT.links.server}" target="_blank" rel="noopener"><img class="si" src="${icon('comments')}" alt="">Join the Discord server</a><button type="button" class="dk-btn" data-x>Close</button></div></div></div>`;
+      const close = () => { veil.remove(); document.removeEventListener('keydown', onEsc, true); banner.focus({ preventScroll: true }); };
+      const onEsc = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+      for (const x of veil.querySelectorAll('[data-x]')) x.onclick = close;
+      veil.addEventListener('pointerdown', (e) => { if (e.target === veil) close(); });
+      document.addEventListener('keydown', onEsc, true);
+      root.append(veil); veil.querySelector('.dk-btn.blue').focus({ preventScroll: true });
+    }
+
+    // ---- Options: the files this browser keeps, display, controls ----
+    function drawOptions(el) {
+      el.innerHTML = `<div class="gwl-options"><div class="panel gwl-panel" data-files></div><div class="gwl-col">
+        <div class="dk-panel"><h2>Display</h2><p class="gwl-hint">The game runs at the window size. 3D quality (on Play) scales only the 3D view.</p>
+          <button type="button" class="dk-btn" data-fs2><img class="si" src="${icon('monitor')}" alt=""><span></span></button></div>
+        <div class="panel gwl-panel" data-controls></div></div></div>`;
+      filesPanel(el.querySelector('[data-files]')); controlsPanel(el.querySelector('[data-controls]'));
+      const b = el.querySelector('[data-fs2]'), label = () => { b.querySelector('span').textContent = document.fullscreenElement ? 'Leave fullscreen' : 'Fullscreen'; };
+      b.onclick = () => { fsBtn.click(); setTimeout(label, 300); }; label();
+    }
+
+    // ---- Chat (web/chat-app.js), shared by the Chat and Friends tabs; it stays alive so notices keep coming ----
+    let chat = null, chatEl = null;
+    const toasts = document.createElement('div'); toasts.className = 'dk gw-toasts'; root.append(toasts);
     const toast = ({ title, body, open: go }) => {
-      const t = document.createElement('div'); t.className = 'gw-toast'; t.innerHTML = '<div><b></b><span></span></div>';
-      t.querySelector('b').textContent = title; t.querySelector('span').textContent = body ?? '';
-      t.onclick = () => { t.remove(); openChat(); go?.(); };
+      const t = document.createElement('button'); t.type = 'button'; t.className = 'gw-toast'; t.innerHTML = `<img class="si" src="${icon('comment')}" alt=""><span><b></b><span></span></span>`;
+      t.querySelector('b').textContent = title; t.querySelector('span span').textContent = body ?? '';
+      t.onclick = () => { t.remove(); show('chat'); go?.(); };
       toasts.append(t); while (toasts.childElementCount > 3) toasts.firstElementChild.remove();
       setTimeout(() => t.remove(), 7000);
     };
-    const chatBadge = () => { const b = $('[data-chatbadge]'); if (!b || !chat) return; const n = chat.unreadCount(); b.hidden = !n || !chatWrap.hidden; b.textContent = n; };
+    function badges() {
+      const n = chat?.unreadCount() ?? 0, req = hub.friends?.incoming?.length ?? 0;
+      const c = $('[data-badge="chat"]'), f = $('[data-badge="friends"]');
+      if (c) { c.hidden = !n || tab === 'chat'; c.textContent = n; }
+      if (f) { f.hidden = !req; f.textContent = req; }
+    }
     function ensureChat() {
       if (chat) return;
-      chatWrap = document.createElement('div'); chatWrap.className = 'gw-overlay'; chatWrap.hidden = true;
-      const app = document.createElement('div'); chatWrap.append(app); root.append(chatWrap);
-      chat = mountChat(app, { hub, mode: 'launcher', onClose: () => closeChat(),
-        onNotify: (n) => { if (chatWrap.hidden) toast(n); chatBadge(); },
-        onEditProfile: () => { closeChat(); if (panel !== 'profile') openPanel('profile'); },
-        onOpenSave: (code) => { closeChat(); openShared(code); } });
+      chatEl = document.createElement('div');
+      chat = mountChat(chatEl, { hub, mode: 'launcher',
+        onNotify: (n) => { if (tab !== 'chat' && tab !== 'friends') toast(n); badges(); },
+        onEditProfile: () => show('profile'),
+        onOpenSave: (code) => openShared(code) });
       chat.visible(false);
-      chatWrap.addEventListener('pointerdown', (e) => { if (e.target === chatWrap) closeChat(); });
-      chatWrap.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); closeChat(); } });
     }
-    function openChat(target) { ensureChat(); chatWrap.hidden = false; chat.visible(true); if (target) chat.open(target); chat.focus(); chatBadge(); }
-    function closeChat() { if (!chatWrap || !chat) return; chatWrap.hidden = true; chat.visible(false); chatBadge(); }
-    if (hub.url && account()) ensureChat();
-    // card: the news card shown (an edition, or 'about'). Hovering or focusing an edition shows it; leaving goes back to `rest`,
-    // which is the About card until a pager square picks another.
-    let panel = null, closePanel = null, rest = 'about', card = rest;
-    const openPanel = (k) => {
-      closePanel?.(); closePanel = null;
-      if (k === 'about') { if (panel) openPanel(panel); rest = 'about'; showCard('about'); return; }
-      if (k === 'chat') { openChat(); return; }
-      if (k === 'friends') { openChat({ kind: 'friends', tab: hub.friends?.incoming?.length ? 'pending' : 'online' }); return; }
-      if (k === 'fullscreen') {
-        if (document.fullscreenElement) document.exitFullscreen?.(); else document.documentElement.requestFullscreen?.().catch(() => {});
-        return;
-      }
-      panel = panel === k ? null : k;
-      panelEl.hidden = !panel; newsEl.hidden = !!panel;
-      for (const a of page.querySelectorAll('[data-open]')) a.classList.toggle('cur', a.dataset.open === panel);
-      render();
-      if (panel === 'saves') savesPanel(panelEl, { highlight: opts.highlightSave, sharedNote: opts.sharedNote, onPlaySave: (file) => play(edition, null, file) });
-      else if (panel === 'versions') versionsPanel(panelEl, { ext, highlight: opts.highlight, onPlay: (v) => play(v.edition, v) });
-      else if (panel === 'profile') profilePanel(panelEl, hub, (why) => { if (why === 'close') openPanel('profile'); else location.reload(); });
-      else if (panel === 'files') filesPanel(panelEl);
-      else if (panel === 'controls') controlsPanel(panelEl);
-      panelEl.querySelector('[data-close]')?.addEventListener('click', (ev) => { ev.preventDefault(); openPanel(panel); });
-    };
-    // Admin accounts get an Admin entry (web/admin.js); the hub decides who is one.
-    import('./admin.js').then(async ({ isAdmin, openAdmin }) => {
-      if (!(await isAdmin()) || !page.isConnected) return;
-      const li = document.createElement('li'); li.className = 'sub';
-      li.innerHTML = '<a href="#" data-admin>Admin</a>';
-      page.querySelector('[data-open="fullscreen"]').closest('li').before(li);
-      li.firstChild.addEventListener('click', (ev) => { ev.preventDefault(); openAdmin(root); });
-    }).catch(() => {});
-    const fsLabel = () => { const a = page.querySelector('[data-open="fullscreen"]'); if (a) a.textContent = document.fullscreenElement ? 'Leave Fullscreen' : 'Fullscreen'; };
-    document.addEventListener('fullscreenchange', fsLabel);
-    for (const a of page.querySelectorAll('[data-open]')) a.addEventListener('click', (ev) => { ev.preventDefault(); openPanel(a.dataset.open); });
+    const hubOffs = [hub.on('welcome', (m) => showOnline(m.online)), hub.on('friends', () => { drawFriends(); badges(); }), hub.on('presence', drawFriends), hub.on('presence-list', drawFriends),
+      hub.on('my-status', drawMe), hub.on('profile', (m) => { if (m.user === account()?.user) drawMe(); })];
+    // Signed in: connected from the start, so friends, private messages and notices arrive while the menu is open.
+    if (hub.url && account()) { hub.setActivity({ kind: 'launcher', detail: 'In the launcher' }); hub.connect(); ensureChat(); drawFriends(); }
 
-    const render = () => {
-      for (const a of page.querySelectorAll('[data-ed]')) a.classList.toggle('cur', a.dataset.ed === edition);
-      for (const d of page.querySelectorAll('[data-pager]')) d.classList.toggle('selected', d.dataset.pager === card);
-      for (const a of page.querySelectorAll('[data-open="about"]')) a.classList.toggle('cur', card === 'about' && !panel);   // a panel covers the card
-      const e = card === 'about' ? ABOUT : EDITIONS[card];
-      $('[data-news]').classList.toggle('banner', !!e.banner);
-      $('[data-news]').style.backgroundImage = `url("${e.banner ? brand('banner.png') : game(e.picture)}")`;
-      $('[data-news-title]').textContent = e.name;
-      $('[data-news-text]').innerHTML = e.blurb(ext);
-      const q = QUALITY[quality];
-      $('[data-gfx-label]').textContent = `Graphics: ${q.label}`;
-      for (const li of popup.children) li.classList.toggle('active', li.dataset.q === quality);
-    };
-    const setEdition = (id) => { if (id !== edition || card !== id) { edition = id; card = id; store.set('edition', id); render(); } };
-    const showCard = (id) => { if (id === 'about') { card = id; render(); } else setEdition(id); };
-    const setQuality = (q) => { if (q !== quality) { quality = q; store.set('quality', q); render(); } };
-    const qs = Object.keys(QUALITY), cycle = (d) => setQuality(qs[(qs.indexOf(quality) + d + qs.length) % qs.length]);
+    // Admin accounts get an Admin tab (web/admin.js); the hub decides who is one.
+    let admin = null;
+    import('./admin.js').then(async ({ isAdmin, mountAdmin }) => {
+      if (!(await isAdmin()) || !win.isConnected || went) return;
+      const b = document.createElement('button'); b.type = 'button'; b.role = 'tab'; b.className = 'dk-tab'; b.dataset.tab = 'admin';
+      b.innerHTML = `<img class="si" src="${icon('shield')}" alt="">Admin`;
+      const pg = document.createElement('section'); pg.className = 'dk-page'; pg.dataset.page = 'admin'; pg.setAttribute('role', 'tabpanel'); pg.hidden = true;
+      $('[data-me]').before(b); $('.dk-tabbody').append(pg); TABS.push(['admin', 'Admin', 'shield']);
+      b.onclick = () => show('admin');
+      adminMount = () => { if (!admin) admin = mountAdmin(pg); admin.visible(true); };
+      if (opts.open === 'admin') show('admin');
+    }).catch(() => {});
+
     let went = false;
+    const teardown = () => {
+      went = true;
+      chat?.destroy(); admin?.destroy(); for (const off of hubOffs) off(); hub.close();
+      document.removeEventListener('keydown', onKey); document.removeEventListener('fullscreenchange', fsLabel);
+      toasts.remove(); root.querySelector('.gwl-about')?.remove();
+    };
     // save: 'saves/x.gms' to load as soon as the game's menu is up (Continue, Play on a save).
     const play = (id, gv = null, save = null) => {
       if (went) return;
-      went = true; edition = id; if (!gv) store.set('edition', id);
-      closePanel?.(); chat?.destroy(); for (const off of hubOffs) off(); hub.close();
-      document.removeEventListener('keydown', onKey); document.removeEventListener('pointerdown', closePopup); document.removeEventListener('fullscreenchange', fsLabel);
-      page.classList.add('leave'); nav.classList.add('leave'); version.remove();
-      chatWrap?.remove(); toasts.remove();
-      setTimeout(() => { page.remove(); nav.remove(); resolve({ edition, scale: QUALITY[quality].scale, version: gv, save }); }, reducedMotion ? 0 : 350);
+      teardown(); edition = id; if (!gv) store.set('edition', id);
+      win.classList.add('leave');
+      setTimeout(() => { win.remove(); resolve({ edition, scale: QUALITY[quality].scale, version: gv, save }); }, reducedMotion ? 0 : 300);
     };
-    // Continue: the newest save, one click back into it.
-    listSaves().then((saves) => {
-      const sv = saves[0], li = page.querySelector('[data-continue]');
-      if (!sv || !li || went) return;
-      li.hidden = false;
-      li.innerHTML = `<a href="#" data-cont>Continue <small></small></a>`;
-      li.querySelector('small').textContent = `${sv.name} · ${new Date(sv.at).toLocaleDateString([], { month: 'short', day: 'numeric' })}`;
-      li.querySelector('a').onclick = (ev) => { ev.preventDefault(); play(edition, null, sv.file); };
-    }).catch(() => {});
+    // Signed in or out: the account's settings now apply, so the window is built again for it (no page reload).
+    const relaunch = (open) => {
+      if (went) return;
+      teardown(); win.remove();
+      resolve({ relaunch: true, open });
+    };
     // A shared save (a ?save= link, or one posted in chat): added to this player's saves, then shown in Saves to play.
     async function openShared(code) {
       try {
@@ -721,57 +821,21 @@ function menu(ext, backdrop, opts = {}) {
         const file = await writeSaveEntries(entries);
         opts.highlightSave = file; opts.sharedNote = `Added “${esc(info.name)}” by ${esc(info.author)}${info.map ? ` (${esc(info.map)})` : ''} to your saves. Press <b>Play</b> to start it.`;
       } catch (e) { opts.sharedNote = esc(e.message); }
-      if (panel === 'saves') openPanel('saves');
-      openPanel('saves');
+      tab = null; show('saves');
     }
-    if (opts.sharedSave) openShared(opts.sharedSave);
-    for (const a of page.querySelectorAll('[data-gv]')) a.addEventListener('click', (ev) => { ev.preventDefault(); const v = getVersion(a.dataset.gv); if (v) play(v.edition, v); });
-    if (opts.open) setTimeout(() => openPanel(opts.open), 0);
-    for (const a of page.querySelectorAll('[data-ed]')) {
-      a.addEventListener('click', (ev) => { ev.preventDefault(); play(a.dataset.ed); });
-      a.addEventListener('pointerenter', () => setEdition(a.dataset.ed));
-      a.addEventListener('focus', () => setEdition(a.dataset.ed));
-      a.addEventListener('pointerleave', () => showCard(rest));
-      a.addEventListener('blur', () => showCard(rest));
-    }
-    for (const d of page.querySelectorAll('[data-pager]')) d.addEventListener('click', () => { if (panel) openPanel(panel); rest = d.dataset.pager; showCard(rest); });
-    $('[data-gfx]').addEventListener('click', () => { popup.hidden = !popup.hidden; if (!popup.hidden) popup.querySelector('.active')?.focus(); });
-    for (const li of popup.children) {
-      const pick = () => { setQuality(li.dataset.q); popup.hidden = true; $('[data-gfx]').focus(); };
-      li.addEventListener('click', pick);
-      li.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); ev.stopPropagation(); pick(); } });
-    }
-    const closePopup = (ev) => { if (!popup.hidden && !popup.contains(ev.target) && !$('[data-gfx]').contains(ev.target)) popup.hidden = true; };
-    document.addEventListener('pointerdown', closePopup);
-    // Up/down (W/S) moves between the Play entries, left/right (A/D) changes the graphics preset, Enter plays.
-    // Typing in a panel (chat) is left alone; Esc there closes the panel.
+    // Ctrl+Tab / Ctrl+Shift+Tab or Ctrl+PageDown/PageUp switch tabs, as in a property sheet.
     const onKey = (ev) => {
-      if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
-      if (ev.target?.closest?.('.admin-overlay')) return;   // the admin panel and its terminal take their own keys
-      if (chatWrap && !chatWrap.hidden) return;              // so does chat
-      const k = ev.key, typing = /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(ev.target?.tagName) && panelEl.contains(ev.target);
-      if (k === 'Escape') { if (!popup.hidden) popup.hidden = true; else if (panel) openPanel(panel); return; }
-      if (typing || panelEl.contains(ev.target)) return;
-      if (!popup.hidden) {
-        if (k === 'ArrowUp' || k === 'ArrowDown') {
-          ev.preventDefault();
-          const items = [...popup.children], i = items.indexOf(document.activeElement);
-          items[(i + (k === 'ArrowUp' ? -1 : 1) + items.length) % items.length].focus();
-        }
-        return;
-      }
-      if (k === 'ArrowUp' || k === 'ArrowDown' || k === 'w' || k === 's') {
-        ev.preventDefault();
-        const id = ids[(ids.indexOf(edition) + (k === 'ArrowUp' || k === 'w' ? -1 : 1) + ids.length) % ids.length];
-        page.querySelector(`[data-ed="${id}"]`).focus();
-      } else if (k === 'ArrowLeft' || k === 'ArrowRight' || k === 'a' || k === 'd') {
-        ev.preventDefault(); cycle(k === 'ArrowLeft' || k === 'a' ? -1 : 1);
-      } else if (k === 'Enter' && !document.activeElement?.closest?.('.navbar, [data-open]')) {
-        ev.preventDefault(); play(edition);
-      }
+      if (ev.target?.closest?.('.admin-overlay')) return;
+      if (!ev.ctrlKey || !(ev.key === 'Tab' || ev.key === 'PageDown' || ev.key === 'PageUp')) return;
+      ev.preventDefault();
+      const keys = TABS.map(([k]) => k), d = ev.key === 'PageUp' || (ev.key === 'Tab' && ev.shiftKey) ? -1 : 1;
+      show(keys[(keys.indexOf(tab) + d + keys.length) % keys.length]);
     };
     document.addEventListener('keydown', onKey);
-    render();
+
+    show(opts.open && TABS.some(([k]) => k === opts.open) ? opts.open : 'play');
+    if (opts.sharedSave) openShared(opts.sharedSave);
+    setTimeout(() => playEl.querySelector('[data-cont]:not([hidden]) [data-go], [data-ed]')?.focus({ preventScroll: true }), 450);
   });
 }
 
@@ -886,7 +950,7 @@ function loading(sel, backdrop) {
 async function start() {
   document.body.classList.add('launcher-ready');
   root.hidden = false;
-  root.innerHTML = '<div class="backdrop"></div><div class="gradient"></div>';
+  root.innerHTML = '<div class="backdrop"></div><div class="vignette"></div>';
   const backdrop = new Backdrop(root.querySelector('.backdrop'));
   // Any explicit parameter (tests, bookmarks such as ?edition=extended&res=640x360) skips the menu; ?launcher=1 forces it.
   const forced = params.get('launcher') === '1'; params.delete('launcher');
@@ -897,28 +961,39 @@ async function start() {
   if (sharedSave) history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params : ''));
   const explicit = !forced && [...params.keys()].filter((k) => k !== 'hub').length > 0;
   let opts = sharedSave && /^[A-Za-z0-9_-]{6,12}$/.test(sharedSave) ? { sharedSave } : {};
+  let resume = null;
+  try { resume = JSON.parse(sessionStorage.getItem('garrys-wasm.resume') ?? 'null'); sessionStorage.removeItem('garrys-wasm.resume'); } catch { /* storage blocked */ }
+  // The menu's backgrounds, skin and edition info start loading now, alongside the account sync below rather than after it.
+  const showMenu = !explicit && !resume;
+  const pictures = showMenu ? backgroundList().then((l) => backdrop.start(l)) : null;
+  const skin = showMenu ? dermaReady() : null, ext = showMenu ? extendedInfo() : null;
   if (shared) {
     try { const v = await importShared(shared); opts = { open: 'versions', highlight: v.id }; } catch (e) { console.warn('[versions]', e.message); opts = { open: 'versions' }; }
     history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params : ''));
   }
   // Signed in: bring this browser's settings up to date with the account first (briefly; offline is fine).
   if (account()) { await Promise.race([sync().catch((e) => console.warn('[account]', e.message)), new Promise((r) => setTimeout(r, 4000))]); autoSync(); }
-  // The account's game files: its own folder in this browser, brought in step with the cloud while the menu is open.
-  const files = prepareGameDir().then(() => (account() ? syncCloud({ mode: 'full' }) : null))
+  // The account's game files: its own folder in this browser, brought in step with the cloud while the menu is open
+  // (and again for the new account after signing in or out from the menu).
+  const syncFiles = () => prepareGameDir().then(() => (account() ? syncCloud({ mode: 'full' }) : null))
     .then((r) => { if (r && !r.skipped) try { localStorage.setItem('garrys-wasm.cloud-last', JSON.stringify({ at: Date.now(), used: r.used, quota: r.quota })); } catch { /* blocked */ } })
     .catch((e) => console.warn('[cloud]', e.message));
-  let sel, resume = null;
-  try { resume = JSON.parse(sessionStorage.getItem('garrys-wasm.resume') ?? 'null'); sessionStorage.removeItem('garrys-wasm.resume'); } catch { /* storage blocked */ }
+  let files = syncFiles();
+  let sel;
   if (resume && !explicit) {
     sel = { edition: resume.edition === 'extended' ? 'extended' : 'base', ...(resume.scale ? { scale: +resume.scale } : {}), version: resume.version ? getVersion(resume.version) : null };
   } else if (explicit) {
     sel = { edition: params.get('edition') === 'extended' ? 'extended' : 'base', ...(params.has('scale') ? { scale: +params.get('scale') } : {}) };
   } else {
     statusEl.textContent = '';
-    const pictures = backgroundList().then((l) => backdrop.start(l)), ext = extendedInfo();
-    // Give the first picture a moment so the menu does not open onto black; never wait long for it.
-    await Promise.race([pictures, new Promise((r) => setTimeout(r, 900))]);
+    // Give the first picture and the skin a moment so the menu does not open onto black or unskinned; never wait long.
+    await Promise.race([Promise.all([pictures, skin]), new Promise((r) => setTimeout(r, 1500))]);
     sel = await menu(await ext, backdrop, opts);
+    while (sel.relaunch) {
+      if (account()) autoSync();
+      files = files.then(syncFiles);
+      sel = await menu(await ext, backdrop, { open: sel.open });
+    }
   }
   statusEl.textContent = 'Starting...';
   const ui = loading(sel, backdrop);

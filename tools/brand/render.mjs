@@ -6,14 +6,15 @@
 //    address bar sits across the top of the page.
 //  - the hero banner's physgun beam is the game's own beam sprite (materials/sprites/physbeam_active_white.vtf) and glow
 //    (sprites/glow04.vtf), drawn along a curve additively and tinted with the default physgun colour, as the game does.
-//   node tools/brand/render.mjs   (needs the game install: dist/gmod-web/game, and the Nimbus Sans font, a Helvetica clone)
-// Output: web/brand/*.png (+ favicon.ico)
+//   node tools/brand/render.mjs [--animated | --preview <dir>]   (needs the game install: dist/gmod-web/game, and the Nimbus Sans font, a Helvetica clone)
+// Output: web/brand/*.png (+ favicon.ico), including banner-animated.png (APNG: light running up the beam); --animated writes only that.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createCanvas, GlobalFonts, ImageData } from '@napi-rs/canvas';
 import { GameFs } from '../lib/vpk.mjs';
 import { decodeVtf } from './vtf.mjs';
+import zlib from 'node:zlib';
 
 const here = path.dirname(fileURLToPath(import.meta.url)), repo = path.resolve(here, '../..'), out = path.join(repo, 'web/brand');
 const gameDir = process.env.GMOD_GAME ?? path.join(repo, 'dist/gmod-web/game');
@@ -123,17 +124,16 @@ function glow(ctx, tex, x, y, size, alpha = 1) {
   ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = alpha; ctx.drawImage(tex, x - size / 2, y - size / 2, size, size); ctx.restore();
 }
 
-// ---- Hero banner: the lockup, held by the physgun ----
-// A dark, slightly blue backdrop (like the menu's darkened backgrounds), the beam coming in from the lower left and taking
-// hold of the tile; the lockup's name and a tagline beside it.
-// The banner: a stylised physgun beam (drawn here, not the game's sprite) filling the canvas on the diagonal, and the name
-// level across its middle. The beam is built in its own frame: x along the beam, y across it.
 function rng(seed) { return () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32); }
-function hero(W = 1600, H = 520) {
+// The banner: a stylised physgun beam (drawn here, not the game's sprite) filling the canvas on the diagonal, and the name
+// level across its middle. The beam is built in its own frame: x along the beam, y across it. The corners the beam does not
+// cover are a deeper blue of their own, so the outermost band and its glow read as beam rather than as background.
+// t (0..1): a frame of the animated banner, a soft light travelling up inside the beam; null for the still banner.
+function hero(W = 1600, H = 520, t = null) {
   const c = createCanvas(W, H), ctx = c.getContext('2d'), rand = rng(7);
-  const bg = ctx.createLinearGradient(0, 0, W, H);
-  bg.addColorStop(0, '#0b3a7c'); bg.addColorStop(1, '#0e4fa6');   // the outermost band's blue, so no corner goes dark
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  // Outside the beam: one solid blue, no glow or gradient (the last step below keeps it so).
+  const BG = '#0b3a7c';
+  ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H);
   const ang = -Math.atan2(H * 1.15, W), L = Math.hypot(W, H) * 1.3;
   const inBeam = (fn, comp = 'lighter', blur = 0) => {
     ctx.save(); ctx.globalCompositeOperation = comp; if (blur) ctx.filter = `blur(${blur}px)`;
@@ -153,11 +153,20 @@ function hero(W = 1600, H = 520) {
     if (edge) { g.shadowBlur = 0; g.strokeStyle = edge; g.lineWidth = 3; g.stroke(); }
   }, 'source-over');
   const along = (a, b) => (g) => { const gr = g.createLinearGradient(-L / 2, 0, L / 2, 0); gr.addColorStop(0, a); gr.addColorStop(1, b); return gr; };
-  wedge(H * 0.9, H * 3.2, along('#0c3f86', '#0f58b8'), { glow: 60, glowColor: 'rgba(20,110,230,0.8)' });
+  wedge(H * 0.9, H * 3.2, along('#0c3f86', '#0f58b8'));
   wedge(H * 0.62, H * 2.2, along('#1474dd', '#1b8ef0'), { glow: 40, glowColor: 'rgba(30,150,255,0.8)' });
   wedge(H * 0.38, H * 1.35, along('#22b4ff', '#35c9ff'), { glow: 34, glowColor: 'rgba(60,210,255,0.9)' });
   wedge(H * 0.2, H * 0.72, along('#8ff0ff', '#b8f7ff'), { glow: 30, glowColor: 'rgba(150,240,255,1)' });
   wedge(H * 0.06, H * 0.26, '#ffffff', { glow: 26, glowColor: 'rgba(255,255,255,1)' });
+  if (t !== null) inBeam((g) => {
+    // inside the second band only, so it follows the beam's flare; it fades in and out at the ends of its run
+    const w0 = H * 0.62, w1 = H * 2.2;
+    g.beginPath(); g.moveTo(-L / 2, -w0 / 2); g.lineTo(L / 2, -w1 / 2); g.lineTo(L / 2, w1 / 2); g.lineTo(-L / 2, w0 / 2); g.closePath(); g.clip();
+    const x = -L * 0.45 + t * L * 0.9, len = L * 0.11, a = 0.32 * Math.sin(Math.PI * t);
+    const gr = g.createLinearGradient(x - len, 0, x + len, 0);
+    gr.addColorStop(0, 'rgba(210,248,255,0)'); gr.addColorStop(0.5, `rgba(210,248,255,${a.toFixed(3)})`); gr.addColorStop(1, 'rgba(210,248,255,0)');
+    g.fillStyle = gr; g.fillRect(x - len, -H * 2, len * 2, H * 4);
+  }, 'lighter');
 
   // the name, level across the middle of the beam
   ctx.font = FONT(200); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.letterSpacing = '-7px';
@@ -165,10 +174,55 @@ function hero(W = 1600, H = 520) {
   ctx.save(); ctx.shadowColor = 'rgba(0,30,60,0.9)'; ctx.shadowBlur = 36; ctx.fillStyle = 'rgba(0,20,45,0.55)'; ctx.fillText(text, tx, ty + 8); ctx.restore();
   ctx.save(); ctx.lineJoin = 'round'; ctx.lineWidth = 12; ctx.strokeStyle = 'rgba(6,38,74,0.85)'; ctx.strokeText(text, tx, ty); ctx.restore();
   ctx.save(); ctx.shadowColor = 'rgba(120,235,255,1)'; ctx.shadowBlur = 40; ctx.fillStyle = '#ffffff'; ctx.fillText(text, tx, ty); ctx.restore();
+  // Everything outside the outermost band goes back to the solid background, so no glow reaches the corners.
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, H);
+  ctx.translate(W / 2, H / 2); ctx.rotate(ang);
+  const w0 = H * 0.9, w1 = H * 3.2;
+  ctx.moveTo(-L / 2, -w0 / 2); ctx.lineTo(L / 2, -w1 / 2); ctx.lineTo(L / 2, w1 / 2); ctx.lineTo(-L / 2, w0 / 2); ctx.closePath();
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = BG; ctx.fill('evenodd'); ctx.restore();
   return c;
 }
 
+
 const png = (c, name) => fs.writeFileSync(path.join(out, name), c.toBuffer('image/png'));
+// The animated banner as APNG (full colour; GIF's 256 colours band the glows). Frames after the first carry only the
+// rectangle that changed. Half size: it is never shown wider than a few hundred pixels.
+function crc32(buf) { let c, crc = ~0; for (const b of buf) { c = (crc ^ b) & 255; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; crc = (crc >>> 8) ^ c; } return ~crc >>> 0; }
+function chunk(type, data) { const len = Buffer.alloc(4), crc = Buffer.alloc(4), td = Buffer.concat([Buffer.from(type), data]); len.writeUInt32BE(data.length); crc.writeUInt32BE(crc32(td)); return Buffer.concat([len, td, crc]); }
+function zdata(rgba, w, x0, y0, cw, ch) {
+  const raw = Buffer.alloc((cw * 4 + 1) * ch);
+  for (let y = 0; y < ch; y++) { raw[y * (cw * 4 + 1)] = 0; Buffer.from(rgba.buffer, rgba.byteOffset + ((y0 + y) * w + x0) * 4, cw * 4).copy(raw, y * (cw * 4 + 1) + 1); }
+  return zlib.deflateSync(raw, { level: 9 });
+}
+function heroApng(W = 640, H = 208, n = 36, delayMs = 60, holdMs = 1800) {
+  const small = createCanvas(W, H), g = small.getContext('2d'), frames = [];
+  for (let i = 0; i <= n; i++) { g.clearRect(0, 0, W, H); g.drawImage(hero(1600, 520, i === n ? null : i / n), 0, 0, W, H); frames.push(Buffer.from(g.getImageData(0, 0, W, H).data)); }
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(W, 0); ihdr.writeUInt32BE(H, 4); ihdr[8] = 8; ihdr[9] = 6;
+  const parts = [Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr)];
+  const actl = Buffer.alloc(8); actl.writeUInt32BE(frames.length, 0); actl.writeUInt32BE(0, 4); parts.push(chunk('acTL', actl));
+  let seq = 0;
+  frames.forEach((f, i) => {
+    let x0 = 0, y0 = 0, x1 = W - 1, y1 = H - 1;
+    if (i > 0) {   // the changed rectangle
+      const prev = frames[i - 1]; x0 = W; y0 = H; x1 = -1; y1 = -1;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const o = (y * W + x) * 4; if (f[o] !== prev[o] || f[o + 1] !== prev[o + 1] || f[o + 2] !== prev[o + 2]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } }
+      if (x1 < 0) { x0 = y0 = 0; x1 = y1 = 0; }
+    }
+    const cw = x1 - x0 + 1, ch = y1 - y0 + 1, fc = Buffer.alloc(26);
+    fc.writeUInt32BE(seq++, 0); fc.writeUInt32BE(cw, 4); fc.writeUInt32BE(ch, 8); fc.writeUInt32BE(x0, 12); fc.writeUInt32BE(y0, 16);
+    fc.writeUInt16BE(i === frames.length - 1 ? holdMs : delayMs, 20); fc.writeUInt16BE(1000, 22); fc[24] = 0; fc[25] = 0;   // keep, replace
+    parts.push(chunk('fcTL', fc));
+    const z = zdata(f, W, x0, y0, cw, ch);
+    if (i === 0) parts.push(chunk('IDAT', z));
+    else { const sq = Buffer.alloc(4); sq.writeUInt32BE(seq++); parts.push(chunk('fdAT', Buffer.concat([sq, z]))); }
+  });
+  parts.push(chunk('IEND', Buffer.alloc(0)));
+  return Buffer.concat(parts);
+}
+// --preview <dir>: only the banner (still and animated) into another folder, to look at before replacing the real ones.
+const pv = process.argv.indexOf('--preview');
+if (pv > 0) { const d = process.argv[pv + 1]; fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, 'banner.png'), hero().toBuffer('image/png')); fs.writeFileSync(path.join(d, 'banner-animated.png'), heroApng()); console.log('wrote', d); process.exit(0); }
+if (process.argv.includes('--animated')) { fs.writeFileSync(path.join(out, 'banner-animated.png'), heroApng()); console.log('wrote banner-animated.png'); process.exit(0); }
 png(lockup(1), 'logo.png');
 png(lockup(2), 'logo@2x.png');
 png(lockup(4), 'logo@4x.png');
@@ -193,6 +247,7 @@ for (const size of [512, 256, 192, 180, 64, 32]) {
 }
 png(icon16(), 'icon-16.png');
 png(hero(), 'banner.png');
+fs.writeFileSync(path.join(out, 'banner-animated.png'), heroApng());
 // favicon.ico: 16 and 32 px PNG images in an ICO container
 const ico = (files) => {
   const imgs = files.map((f) => fs.readFileSync(path.join(out, f))), head = Buffer.alloc(6 + 16 * imgs.length);

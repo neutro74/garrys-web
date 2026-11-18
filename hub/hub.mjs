@@ -19,6 +19,8 @@ import { createProfiles } from './profiles.mjs';
 import { createCloud } from './cloud.mjs';
 import { createShares } from './shares.mjs';
 import { createSocial } from './social.mjs';
+import { createEmotes } from './emotes.mjs';
+import { createVoice } from './voice.mjs';
 import { json, fail, bytes, imageType, blobStore, limiter } from './http-util.mjs';
 import path from 'node:path';
 
@@ -36,7 +38,7 @@ const CHANNELS = [
 ];
 const ROOMS = CHANNELS.map((c) => c.id);
 const MUTED = new Set(['say', 'dm', 'nick', 'host', 'edit', 'react', 'typing']);
-const LIMITED = new Set(['say', 'dm', 'nick', 'hello', 'host', 'room-history', 'dm-history', 'edit', 'delete', 'react', 'friend-add', 'profile-of']);
+const LIMITED = new Set(['say', 'dm', 'nick', 'hello', 'host', 'room-history', 'dm-history', 'edit', 'delete', 'react', 'friend-add', 'profile-of', 'vc-join', 'vc-edit', 'vc-allow', 'vc-kick']);
 const EMOJI = /^(?:\p{Extended_Pictographic}|\p{Emoji_Presentation}|[\u{1F1E6}-\u{1F1FF}]{2}|[#*0-9]\uFE0F?\u20E3)(?:[\uFE0F\u200D\u{1F3FB}-\u{1F3FF}]|\p{Extended_Pictographic}|\p{Emoji_Presentation})*$/u;
 const IMG = /^[a-f0-9]{64}\.(png|jpg|webp|gif)$/;
 const LIMITS = { clients: 500, perIp: 6, frame: 64 * 1024, text: 400, name: 24, history: 60, lobbies: 100, burst: 6, refillMs: 1500 };
@@ -119,6 +121,7 @@ class Conn {
     clients.delete(this);
     if (this.name) admin.seen(this);
     for (const r of this.rooms) leaveRoom(this, r);
+    voice.leave(this);
     for (const [id, l] of lobbies) if (l.host === this) dropLobby(id);
     if (this.account) presenceChanged(this.account);
   }
@@ -241,7 +244,8 @@ function handle(c, m) {
     c.activity = cleanActivity(m.activity);
     admin.seen(c);
     if (refuseBanned(c)) return;
-    return c.send({ t: 'welcome', id: c.id, name, key: ownerKey(c), rooms: roomList(), online: clients.size, presence: onlineAccounts() });
+    c.send({ t: 'welcome', id: c.id, name, key: ownerKey(c), rooms: roomList(), online: clients.size, presence: onlineAccounts() });
+    return voice.sendList(c);
   }
   if (MUTED.has(m.t)) { const mu = admin.muted(c); if (mu) throw Error(`You are muted${mu.until ? ' until ' + new Date(mu.until).toUTCString() : ''}${mu.reason ? ': ' + mu.reason : ''}.`); }
   if (!c.name) throw Error('Say hello first.');
@@ -257,13 +261,13 @@ function handle(c, m) {
     }
     case 'leave': return leaveRoom(c, m.room);
     case 'say': {
-      const r = rooms.get(m.room), text = clean(m.text, LIMITS.text), attach = attachments(m.attach);
+      const r = rooms.get(m.room), text = clean(m.text, LIMITS.text), attach = attachments(m.attach), sticker = emotes.sticker(m.sticker);
       if (!r?.members.has(c)) throw Error('Join the room first.');
       if (channel(m.room)?.readonly && !isAdmin(c)) throw Error('Only admins post in this channel.');
-      if (attach && !c.account) throw Error('Sign in to a Garry\'s Web account to post pictures.');
-      if (!text && !attach) return;
+      if ((attach || sticker) && !c.account) throw Error('Sign in to a Garry\'s Web account to post pictures and stickers.');
+      if (!text && !attach && !sticker) return;
       const reply = m.reply ? replyTo(chat.findRoom(m.room, String(m.reply))) : undefined;
-      const msg = { t: 'msg', id: crypto.randomBytes(6).toString('base64url'), room: m.room, from: user(c), text, at: Date.now(), ...(reply ? { reply } : {}), ...(attach ? { attach } : {}) };
+      const msg = { t: 'msg', id: crypto.randomBytes(6).toString('base64url'), room: m.room, from: user(c), text, at: Date.now(), ...(reply ? { reply } : {}), ...(attach ? { attach } : {}), ...(sticker ? { sticker } : {}) };
       r.history.push(msg); if (r.history.length > LIMITS.history) r.history.shift();
       keep(() => chat.saveRoom(m.room, msg));
       mention(c, text, { room: m.room, id: msg.id });
@@ -305,7 +309,8 @@ function handle(c, m) {
       if (name.length < 2) throw Error('Pick a name of at least 2 characters.');
       const old = c.name; c.name = name;
       for (const r of c.rooms) toRoom(r, { t: 'nick', room: r, user: user(c), old });
-      return c.send({ t: 'welcome', id: c.id, name, key: ownerKey(c), rooms: roomList(), online: clients.size, presence: onlineAccounts() });
+      c.send({ t: 'welcome', id: c.id, name, key: ownerKey(c), rooms: roomList(), online: clients.size, presence: onlineAccounts() });
+      return voice.sendList(c);
     }
     // Older messages of a room, before a time (the client scrolls back).
     case 'room-history': {
@@ -326,14 +331,14 @@ function handle(c, m) {
     }
     case 'dm': {
       if (!c.account) throw Error('Sign in to a Garry\'s Web account (Profile) to send private messages.');
-      const to = String(m.to ?? '').toLowerCase(), text = clean(m.text, LIMITS.text), attach = attachments(m.attach);
+      const to = String(m.to ?? '').toLowerCase(), text = clean(m.text, LIMITS.text), attach = attachments(m.attach), sticker = emotes.sticker(m.sticker);
       if (to === c.account) throw Error('That is you.');
       if (!accounts.exists(to)) throw Error(`There is no account called ${to}.`);
       if (social.blocks(to, c.account)) throw Error(`${to} is not accepting your messages.`);
       if (social.blocks(c.account, to)) throw Error(`You blocked ${to}. Unblock them to send messages.`);
-      if (!text && !attach) return;
+      if (!text && !attach && !sticker) return;
       const reply = m.reply ? replyTo(chat.findDm(c.account, to, String(m.reply))) : undefined;
-      const msg = { t: 'dm', id: crypto.randomBytes(6).toString('base64url'), from: c.account, name: c.name, to, text, at: Date.now(), ...(reply ? { reply } : {}), ...(attach ? { attach } : {}) };
+      const msg = { t: 'dm', id: crypto.randomBytes(6).toString('base64url'), from: c.account, name: c.name, to, text, at: Date.now(), ...(reply ? { reply } : {}), ...(attach ? { attach } : {}), ...(sticker ? { sticker } : {}) };
       chat.saveDm(c.account, to, msg);
       for (const x of clients) if (x.account === to || x.account === c.account) x.send(msg);
       return;
@@ -387,7 +392,9 @@ function handle(c, m) {
       return to.send({ t: 'signal', from: user(c), data: m.data ?? null });
     }
     case 'ping': return c.send({ t: 'pong' });
-    default: throw Error(`Unknown request ${m.t}`);
+    default:
+      if (voice.handle(c, m)) return;
+      throw Error(`Unknown request ${m.t}`);
   }
 }
 
@@ -448,6 +455,11 @@ const admin = createAdmin({ accounts, hub: {
   closeLobby(id) { const l = lobbies.get(id); if (!l) throw Error('That game is already closed.'); l.host.send({ t: 'lobby-closed', id }); dropLobby(id); },
 } });
 const shares = createShares({ accounts, isAdmin: (u) => admin.isAdmin(u) });
+// Custom emojis and stickers (admins add them) and GIF links copied into the chat picture store (hub/emotes.mjs).
+const emotes = createEmotes({ accounts, isAdmin: (u) => admin.isAdmin(u), chatImages, muted: (who) => admin.muted(who), log: console.log,
+  onChange: () => { for (const c of clients) if (c.name) c.send({ t: 'emotes' }); } });
+// Voice channels and "Join to create" ones (hub/voice.mjs); audio goes browser to browser.
+const voice = createVoice({ clients: () => clients, isAdmin: (u) => !!u && admin.isAdmin(u), log: console.log });
 // A banned player's socket is told why, then closed (the page stops reconnecting).
 function refuseBanned(c) {
   const b = admin.banned({ ip: c.ip, device: c.device, account: c.account });
@@ -469,6 +481,7 @@ const server = http.createServer(async (req, res) => {
   if (await profiles(req, res, { ip: clientIp(req), headers: cors(req) })) return;
   if (await cloud(req, res, { ip: clientIp(req), headers: cors(req) })) return;
   if (await shares(req, res, { ip: clientIp(req), headers: cors(req) })) return;
+  if (await emotes.handle(req, res, cors(req), clientIp(req))) return;
   if (await chatUpload(req, res, cors(req), clientIp(req))) return;
   if (req.url === '/health' || req.url === '/status') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...cors(req) });

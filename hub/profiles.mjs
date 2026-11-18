@@ -46,7 +46,7 @@ export function createProfiles({ accounts, dir = path.join(process.env.WS_CACHE 
     if ('banner' in f) p.banner = COLOR.test(f.banner ?? '') ? f.banner.toLowerCase() : '';
     if ('status' in f) { if (!STATUSES.includes(f.status)) throw fail(400, 'Unknown status.'); p.status = f.status; }
     if ('custom' in f) {
-      const c = f.custom, text = clean(c?.text, 64), emoji = clean(c?.emoji, 8);
+      const c = f.custom, text = clean(c?.text, 64), emoji = clean(c?.emoji, 40);   // a Unicode emoji or a :name: one
       p.custom = text || emoji ? { text, emoji, ...(+c?.until > Date.now() ? { until: +c.until } : {}) } : null;
     }
     if ('links' in f) p.links = (Array.isArray(f.links) ? f.links : []).slice(0, 4).map((l) => clean(l, 200)).filter((l) => /^https:\/\/[^\s<>"]+$/.test(l));

@@ -176,7 +176,7 @@ function lobbyView(id, l) { return { id, host: l.host.id, hostName: l.host.name,
 // A game marked LAN ("Local Server" in Start New Game) is shown only to players behind the same public address.
 function lobbyList(viewer) { return [...lobbies].filter(([, l]) => !l.info.lan || l.host.ip === viewer?.ip).map(([id, l]) => lobbyView(id, l)); }
 function pushLobbies() { for (const c of clients) if (c.watching) c.send({ t: 'lobbies', lobbies: lobbyList(c) }); }
-function dropLobby(id) { if (lobbies.delete(id)) pushLobbies(); }
+function dropLobby(id) { const l = lobbies.get(id); if (lobbies.delete(id)) { pushLobbies(); if (l.host.account) presenceChanged(l.host.account); } }
 
 // ---- Presence ---------------------------------------------------------------------------------------------------
 // An account is online while any of its pages is connected; its status is the one chosen in its profile (invisible counts as
@@ -185,7 +185,11 @@ function presenceOf(u) {
   const conns = [...clients].filter((c) => c.account === u && c.name);
   if (!conns.length) return { user: u, status: 'offline', activity: null };
   const status = profiles.status(u), act = conns.map((c) => c.activity).filter(Boolean).sort((a, b) => (b.at ?? 0) - (a.at ?? 0))[0] ?? null;
-  return { user: u, status: status === 'invisible' ? 'offline' : status, activity: status === 'invisible' ? null : act };
+  if (status === 'invisible') return { user: u, status: 'offline', activity: null };
+  // A game this player hosts (not a LAN-only one), so friends can join it from chat.
+  const hosted = [...lobbies].find(([, l]) => l.host.account === u && !l.info.lan);
+  const game = hosted ? { id: hosted[0], name: hosted[1].info.name, map: hosted[1].info.map, edition: hosted[1].info.edition, players: hosted[1].info.players, max: hosted[1].info.max, locked: hosted[1].info.locked } : null;
+  return { user: u, status, activity: act, ...(game ? { game } : {}) };
 }
 const lastPresence = new Map();
 function presenceChanged(u) {
@@ -418,6 +422,7 @@ function handle(c, m) {
       if (!id) { if (lobbies.size >= LIMITS.lobbies) throw Error('Too many open games right now.'); id = crypto.randomBytes(5).toString('base64url'); }
       lobbies.set(id, { host: c, info });
       pushLobbies();
+      if (c.account) presenceChanged(c.account);
       return c.send({ t: 'hosting', id, lobby: lobbyView(id, lobbies.get(id)) });
     }
     case 'unhost': for (const [id, l] of lobbies) if (l.host === c) dropLobby(id); return c.send({ t: 'hosting', id: null });

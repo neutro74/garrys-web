@@ -219,3 +219,17 @@ test('profiles, cloud files and shared saves', async () => {
   assert.equal((await fetch(`${base}/share/${shared.code}`, { method: 'DELETE', headers: a.auth })).status, 200);
   a.c.ws.close();
 });
+
+test('presence: a hosted game shows on the host, for Join in chat', async () => {
+  const a = await account('hst'), b = await account('frn');
+  b.c.send({ t: 'presence' });
+  a.c.send({ t: 'host', lobby: { name: 'Build night', edition: 'base', map: 'gm_construct', max: 6, players: 1 } });
+  const hosting = await a.c.next('hosting');
+  let p;
+  do p = await b.c.next('presence'); while (p.user !== a.user || !p.game);
+  assert.equal(p.game.id, hosting.id); assert.equal(p.game.name, 'Build night'); assert.equal(p.game.max, 6);
+  a.c.send({ t: 'unhost' });
+  do p = await b.c.next('presence'); while (p.user !== a.user);
+  assert.equal(p.game, undefined);
+  for (const x of [a.c, b.c]) x.ws.close();
+});

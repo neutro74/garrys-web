@@ -400,3 +400,6 @@ html:not(.dk-ready) .gw-toast { background: #fff5af; border: 1px solid #000; }
 #launcher .gww-pic, #launcher .gww-dpic, #launcher .gww-rpic { position: relative; overflow: hidden; padding: 0; }
 #launcher .gww-img { display: block; width: 100%; height: 100%; object-fit: cover; }
 #launcher .gww-img.none, #launcher .gww-img:not([src]) { visibility: hidden; }
+#launcher .gwl-ban { width: min(460px, 100%); }
+#launcher .gwl-ban .gwl-banhead { font: bold 16px var(--dk-large, Helvetica, Arial, sans-serif); color: #b22; }
+#launcher .gwl-ban p { margin: 0; white-space: normal; }

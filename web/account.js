@@ -8,7 +8,7 @@ import { hubHttp } from './library.js';
 // game versions, the addon library list, bundled-addon choices, graphics preset, chat state...), except what belongs to this
 // browser alone: the session itself, the hub address, one-off page state. 'steam' is the Steam sign-in's key
 // (web/steam-account.js): with it, every browser on the account can join real servers.
-const LOCAL_ONLY = /^(account|hub|resume|context-lost|guest-stash|cdn-isolation:.*|adopt-files|cloud-.*|launch-timing)$/;
+const LOCAL_ONLY = /^(ban|account|hub|resume|context-lost|guest-stash|cdn-isolation:.*|adopt-files|cloud-.*|launch-timing)$/;
 const P = 'garrys-wasm.';
 const ls = {
   get(k) { try { return localStorage.getItem(P + k); } catch { return null; } },

@@ -4,7 +4,7 @@
 // Both screens copy the game's own pages (main menu: html/template/main.html; loading: html/loading.html) and use
 // their stock images, so the launcher looks like the game it starts and nothing extra ships.
 
-import { sharedHub, hubStatus, playerId, hubUrl, requestHubAccess } from './hub.js';
+import { sharedHub, hubStatus, playerId, hubUrl, requestHubAccess, banCheck } from './hub.js';
 import { mountChat, chatStyles, STATUS } from './chat-app.js';
 import { myProfile, saveProfile, uploadImage, removeImage, resizeImage, avatarEl, imageUrl, displayName, nameHue, getProfile, cachedProfile } from './profiles.js';
 import { dermaReady, icon } from './derma.js';
@@ -783,7 +783,10 @@ function menu(ext, backdrop, opts = {}) {
         onJoinGame: (g) => play(g.edition === 'extended' && ext ? 'extended' : 'base', null, null, g.id) });
       chat.visible(false);
     }
-    const hubOffs = [hub.on('welcome', (m) => showOnline(m.online)), hub.on('friends', () => { drawFriends(); badges(); }), hub.on('presence', drawFriends), hub.on('presence-list', drawFriends),
+    // Banned while here: the ban screen (a signed-in page hears it at once; any page checks once a minute).
+    const banTimer = setInterval(() => banCheck().then((b) => { if (b) location.reload(); }).catch(() => {}), 60e3);
+    const hubOffs = [hub.on('banned', () => location.reload()), () => clearInterval(banTimer),
+      hub.on('welcome', (m) => showOnline(m.online)), hub.on('friends', () => { drawFriends(); badges(); }), hub.on('presence', drawFriends), hub.on('presence-list', drawFriends),
       hub.on('my-status', drawMe), hub.on('profile', (m) => { if (m.user === account()?.user) drawMe(); })];
     // Signed in: connected from the start, so friends, private messages and notices arrive while the menu is open.
     if (hub.url && account()) { hub.setActivity({ kind: 'launcher', detail: 'In the launcher' }); hub.connect(); ensureChat(); drawFriends(); }
@@ -972,6 +975,24 @@ function loading(sel, backdrop) {
   return { fail };
 }
 
+// ---- Banned ------------------------------------------------------------------------------------------------------
+function banScreen(ban) {
+  document.body.classList.add('launcher-ready');
+  root.hidden = false;
+  dermaReady();
+  const until = ban.until ? new Date(ban.until).toLocaleString([], { dateStyle: 'long', timeStyle: 'short' }) : null;
+  root.innerHTML = `<div class="loadscreen gwl-load dk"><div class="gwl-loadbg"><div class="gw-light"></div></div>
+    <div class="dk-window gwl-loadwin gwl-ban" role="alertdialog" aria-label="Banned">
+      <div class="dk-title"><img src="${icon('delete')}" alt="">Banned from Garry's Web<span class="dk-tinfo"></span></div>
+      <div class="dk-panel gwl-loadbody"><b class="gwl-banhead">You are banned from Garry's Web.</b>
+        ${ban.reason ? `<p>Reason: <b></b></p>` : ''}
+        <p>${until ? `The ban ends on ${esc(until)}.` : 'This ban does not end.'}</p>
+        <p class="dk-say">While it lasts you cannot play, chat, use voice, the Workshop, your account or your saves here.</p>
+        <div class="gwl-loadfoot"><button type="button" class="dk-btn" data-again><img class="si" alt="" src="${icon('arrow_refresh')}">Check again</button></div></div></div></div>`;
+  if (ban.reason) root.querySelector('.gwl-ban p b').textContent = ban.reason;
+  root.querySelector('[data-again]').onclick = () => location.reload();
+}
+
 // ---- Start -----------------------------------------------------------------------------------------------------
 async function start() {
   // Ask for access to the server while the splash is still up (see requestHubAccess); a prompt then comes now, not mid-menu.
@@ -979,6 +1000,9 @@ async function start() {
     statusEl.textContent = 'Connecting to the Garry\'s Web server...';
     await requestHubAccess({ onWait: () => { statusEl.textContent = 'Connecting to the Garry\'s Web server... If your browser asks to allow access to devices on your local network, choose Allow.'; } });
   }
+  // Banned (by address, browser or account): a ban screen, and nothing else opens (no launcher, no game).
+  const ban = await banCheck().catch(() => null);
+  if (ban) { banScreen(ban); return; }
   document.body.classList.add('launcher-ready');
   root.hidden = false;
   root.innerHTML = '<div class="backdrop"></div><div class="vignette"></div>';

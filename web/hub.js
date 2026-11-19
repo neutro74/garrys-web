@@ -21,6 +21,26 @@ export function playerId() {
 }
 const randomName = () => `Player${playerId().slice(-4)}`;
 
+// Every request this page makes to the hub carries the browser's id (X-Device), so a ban by browser covers all of the hub's
+// services, not only chat (hub/hub.mjs banOf). Installed once, around fetch, for requests to the hub's own address.
+(() => {
+  if (globalThis.__gwDeviceFetch || typeof fetch !== 'function') return;
+  globalThis.__gwDeviceFetch = true;
+  const base = () => { const u = hubUrl(); return u ? u.replace(/^ws/, 'http').replace(/\/?$/, '/') : ''; };
+  const orig = globalThis.fetch.bind(globalThis);
+  globalThis.fetch = (input, init) => {
+    try {
+      const b = base(), url = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url;
+      if (b && url && url.startsWith(b)) {
+        if (input instanceof Request) { const h = new Headers(input.headers); h.set('X-Device', playerId()); return orig(new Request(input, { headers: h }), init); }
+        const h = new Headers(init?.headers ?? {}); h.set('X-Device', playerId());
+        return orig(input, { ...(init ?? {}), headers: h });
+      }
+    } catch { /* fall through unchanged */ }
+    return orig(input, init);
+  };
+})();
+
 export class Hub extends EventTarget {
   constructor(url = hubUrl()) {
     super();
@@ -148,5 +168,22 @@ export async function requestHubAccess({ url = hubUrl(), onWait = () => {}, max 
     return false;
   };
   try { return await Promise.race([attempt(), new Promise((r) => setTimeout(() => r(false), max))]); } finally { clearTimeout(waiting); }
+}
+
+// Is this browser banned? (hub /ban-check; the launcher shows a ban screen instead of opening.) A ban seen once is kept
+// here, so the screen still shows when the hub cannot be reached; a "not banned" answer clears it.
+const BAN_KEY = 'garrys-wasm.ban';
+export async function banCheck(url = hubUrl()) {
+  let kept = null;
+  try { kept = JSON.parse(localStorage.getItem(BAN_KEY) ?? 'null'); } catch { /* blocked */ }
+  if (kept?.until && kept.until < Date.now()) kept = null;
+  if (!url) return kept;
+  try {
+    const a = (() => { try { return JSON.parse(localStorage.getItem('garrys-wasm.account') ?? 'null'); } catch { return null; } })();
+    const r = await fetch(url.replace(/^ws/, 'http').replace(/\/?$/, '/ban-check'), { cache: 'no-store', signal: AbortSignal.timeout(6000), headers: a?.token ? { Authorization: `Bearer ${a.token}`, 'X-User': a.user } : {} });
+    const j = await r.json();
+    try { if (j.banned) localStorage.setItem(BAN_KEY, JSON.stringify({ reason: j.reason ?? '', until: j.until ?? 0, at: Date.now() })); else localStorage.removeItem(BAN_KEY); } catch { /* blocked */ }
+    return j.banned ? { reason: j.reason ?? '', until: j.until ?? 0 } : null;
+  } catch { return kept; }
 }
 

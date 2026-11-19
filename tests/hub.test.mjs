@@ -275,6 +275,16 @@ test('bans never lock out an admin; banning an admin\'s own browser is refused',
   assert.equal((await act('ban', { target: { device: otherDev }, reason: 'bye' })).status, 200);
   const guest = await signIn(otherDev, false);
   assert.ok((await guest.next('banned')));
+  // The whole hub is closed to that browser: its requests (they carry X-Device), the ban check, and the relays.
+  assert.equal((await fetch(`${base}/ws/fetch/123`, { headers: { 'X-Device': otherDev } })).status, 403);
+  assert.equal((await fetch(`${base}/v/abcdefgh`, { headers: { 'X-Device': otherDev } })).status, 403);
+  assert.equal((await (await fetch(`${base}/ban-check`, { headers: { 'X-Device': otherDev } })).json()).banned, true);
+  assert.equal((await (await fetch(`${base}/ban-check`, { headers: { 'X-Device': otherDev, ...auth } })).json()).banned, false);   // the admin on it
+  assert.equal((await (await fetch(`${base}/ban-check`, { headers: { 'X-Device': adminDev } })).json()).banned, false);
+  const pre = await fetch(`${base}/ws/fetch/123`, { method: 'OPTIONS', headers: { Origin: 'https://example.com', 'Access-Control-Request-Headers': 'x-device' } });
+  assert.match(pre.headers.get('access-control-allow-headers') ?? '', /X-Device/);
+  const relay = new WebSocket(`ws://127.0.0.1:${PORT}/pair?t=abc&d=${otherDev}`);
+  assert.equal(await new Promise((r) => { relay.onopen = () => r('open'); relay.onerror = () => r('refused'); relay.onclose = () => r('refused'); }), 'refused');
   const adminOnBannedBrowser = await signIn(otherDev, true);
   adminOnBannedBrowser.send({ t: 'ping' }); assert.ok(await adminOnBannedBrowser.next('pong'));
   for (const x of [me, guest, adminOnBannedBrowser]) x.ws.close();

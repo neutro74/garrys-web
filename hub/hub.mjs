@@ -535,10 +535,27 @@ function refuseBanned(c) {
   if (!b) return false;
   c.send({ t: 'banned', ...admin.banInfo(b) }); c.close(4003); return true;
 }
+// Every page request to the hub carries the browser's id (X-Device, web/hub.js), so a ban by browser or account closes all
+// of the hub to that player (chat, Workshop downloads, accounts, profiles, saves, Steam sign-in), not only chat.
+// One answer for every CORS preflight, so that header (and the others the services use) is always allowed.
+const PREFLIGHT = { 'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-User, X-Admin, X-Device, X-Proxy-Token, Range', 'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS', 'Access-Control-Max-Age': '600' };
+const deviceOf = (req) => (/^\d{1,12}$/.test(String(req.headers['x-device'] ?? '')) ? String(req.headers['x-device']) : null);
+function banOf(req) {
+  const account = accounts.userOf(req);
+  if (account && admin.isAdmin(account)) return null;   // admins are never locked out
+  return admin.banned({ ip: clientIp(req), device: deviceOf(req), account });
+}
 const server = http.createServer(async (req, res) => {
+  if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors(req), ...PREFLIGHT }); return res.end(); }
   if (await admin(req, res, { ip: clientIp(req), headers: cors(req) })) return;
-  const ban = admin.banned({ ip: clientIp(req) });
-  if (ban && req.method !== 'OPTIONS' && req.url !== '/health' && !admin.isAdmin(accounts.userOf(req))) {
+  // Is this browser banned? The launcher asks before it opens (web/launcher.js shows a ban screen instead).
+  if (req.url.split('?')[0] === '/ban-check') {
+    const b = banOf(req);
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...cors(req) });
+    return res.end(JSON.stringify(b ? { banned: true, ...admin.banInfo(b) } : { banned: false }));
+  }
+  const ban = req.url !== '/health' ? banOf(req) : null;
+  if (ban) {
     res.writeHead(403, { 'Content-Type': 'application/json', ...cors(req) });
     return res.end(JSON.stringify({ error: 'You are banned from Garry\'s Web.', banned: true, ...admin.banInfo(ban) }));
   }
@@ -570,7 +587,9 @@ server.on('upgrade', (req, socket) => {
     const c = new Conn(socket, ip); c.relay = true; admin.terminal(c);
     return;
   }
-  if (ipBan && (req.url.startsWith('/udp') || req.url.startsWith('/pair'))) return reject(403, 'Forbidden');
+  // Relays carry the browser id in the address (?d=, web/p2p.js): a banned browser gets no relay either.
+  const relayBan = ipBan || admin.banned({ ip, device: /^\d{1,12}$/.test(new URL(req.url, 'http://x').searchParams.get('d') ?? '') ? new URL(req.url, 'http://x').searchParams.get('d') : null });
+  if (relayBan && (req.url.startsWith('/udp') || req.url.startsWith('/pair'))) return reject(403, 'Forbidden');
   if (req.url.startsWith('/udp')) {
     if (relays.size >= 200 || [...relays].filter((c) => c.ip === ip && !c.pair).length >= 2) return reject(429, 'Too Many Connections');
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${crypto.createHash('sha1').update(key + GUID).digest('base64')}\r\n\r\n`);

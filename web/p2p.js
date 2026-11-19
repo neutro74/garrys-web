@@ -8,7 +8,7 @@
 // By default no STUN server is used, so connections work on the same network (LAN). Passing {internet: true} adds one public
 // STUN server to reach peers across NATs; that sends the browser's address to that server, so it is opt-in.
 import { createRing, RingReader, RingWriter } from '../tools/lift/host/ring.mjs';
-import { hubUrl } from './hub.js';
+import { hubUrl, playerId } from './hub.js';
 
 const VNET = (10 << 24) | (77 << 16), HOST_IP = VNET | 1;
 const ipStr = (n) => [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.');
@@ -36,7 +36,7 @@ const RELAY_AFTER_MS = 5000;
 class HubChannel {
   constructor(url, token) {
     this.readyState = 'connecting'; this.relayed = true;
-    const ws = this.ws = new WebSocket(url.replace(/\/?$/, '/pair') + '?t=' + encodeURIComponent(token));
+    const ws = this.ws = new WebSocket(url.replace(/\/?$/, '/pair') + '?t=' + encodeURIComponent(token) + '&d=' + encodeURIComponent(playerId()));
     ws.binaryType = 'arraybuffer';
     ws.onmessage = (e) => {
       const b = new Uint8Array(e.data);
@@ -108,7 +108,7 @@ export class P2P {
     if (!url) return null;
     if (Date.now() - (this.relayTried ?? 0) < 3000) return null;
     this.relayTried = Date.now(); this.relayQueue = [];
-    const ws = this.relay = new WebSocket(url.replace(/\/?$/, '/udp'));
+    const ws = this.relay = new WebSocket(url.replace(/\/?$/, '/udp') + '?d=' + encodeURIComponent(playerId()));   // d: this browser's id (bans)
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => { for (const b of this.relayQueue.splice(0)) ws.send(b); };
     ws.onmessage = (e) => {

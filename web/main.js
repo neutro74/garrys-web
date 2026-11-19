@@ -113,7 +113,7 @@ autoSync();   // signed in: in-game changes (versions, addons) reach the account
 import { P2P } from './p2p.js';
 import { GameVoice } from './voice.js';
 import { Lobby } from './lobby.js';
-import { hubUrl } from './hub.js';
+import { hubUrl, sharedHub } from './hub.js';
 import { steamAccount, accountId, ticket as steamTicket, keepalive as steamKeepalive } from './steam-account.js';
 import { gameDirName, autoPush, syncCloud } from './cloud-sync.js';
 import { createOverlay } from './overlay.js';
@@ -152,6 +152,8 @@ window.__p2p = p2p;
 window.__lobby = lobby;
 // Chat over the game (Shift+Tab) and what friends see this player doing.
 const playing = version ? version.name : edition === 'extended' ? "Garry's Mod: Extended" : "Garry's Mod";
+// Banned while playing (hub/admin.mjs closes the socket with 'banned'): the game stops and the page shows the ban screen.
+if (hubUrl()) sharedHub().on('banned', () => { try { localStorage.setItem('garrys-wasm.ban', JSON.stringify({ reason: '', until: 0, at: Date.now() })); } catch { /* blocked */ } location.replace(location.pathname + '?launcher=1'); });
 const gameActivity = (map) => ({ kind: map ? 'game' : 'menu', detail: map ? `Playing ${map} · ${playing}` : `In the main menu · ${playing}`, edition, map: map ?? '' });
 let overlay = null;
 try {

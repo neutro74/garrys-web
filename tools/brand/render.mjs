@@ -129,7 +129,7 @@ function rng(seed) { return () => ((seed = (seed * 1664525 + 1013904223) >>> 0) 
 // level across its middle. The beam is built in its own frame: x along the beam, y across it. The corners the beam does not
 // cover are a deeper blue of their own, so the outermost band and its glow read as beam rather than as background.
 // t (0..1): a frame of the animated banner, a soft light travelling up inside the beam; null for the still banner.
-function hero(W = 1600, H = 520, t = null) {
+function hero(W = 1600, H = 520, t = null, { text = true } = {}) {
   const c = createCanvas(W, H), ctx = c.getContext('2d'), rand = rng(7);
   // Outside the beam: one solid blue, no glow or gradient (the last step below keeps it so).
   const BG = '#0b3a7c';
@@ -168,12 +168,14 @@ function hero(W = 1600, H = 520, t = null) {
     g.fillStyle = gr; g.fillRect(x - len, -H * 2, len * 2, H * 4);
   }, 'lighter');
 
-  // the name, level across the middle of the beam
+  // the name, level across the middle of the beam (left out for the loading-screen background, which has the logo over it)
+  if (text) {
   ctx.font = FONT(200); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.letterSpacing = '-7px';
-  const tx = W / 2, ty = H / 2 + 6, text = "garry’s web";
-  ctx.save(); ctx.shadowColor = 'rgba(0,30,60,0.9)'; ctx.shadowBlur = 36; ctx.fillStyle = 'rgba(0,20,45,0.55)'; ctx.fillText(text, tx, ty + 8); ctx.restore();
-  ctx.save(); ctx.lineJoin = 'round'; ctx.lineWidth = 12; ctx.strokeStyle = 'rgba(6,38,74,0.85)'; ctx.strokeText(text, tx, ty); ctx.restore();
-  ctx.save(); ctx.shadowColor = 'rgba(120,235,255,1)'; ctx.shadowBlur = 40; ctx.fillStyle = '#ffffff'; ctx.fillText(text, tx, ty); ctx.restore();
+  const tx = W / 2, ty = H / 2 + 6, name = "garry’s web";
+  ctx.save(); ctx.shadowColor = 'rgba(0,30,60,0.9)'; ctx.shadowBlur = 36; ctx.fillStyle = 'rgba(0,20,45,0.55)'; ctx.fillText(name, tx, ty + 8); ctx.restore();
+  ctx.save(); ctx.lineJoin = 'round'; ctx.lineWidth = 12; ctx.strokeStyle = 'rgba(6,38,74,0.85)'; ctx.strokeText(name, tx, ty); ctx.restore();
+  ctx.save(); ctx.shadowColor = 'rgba(120,235,255,1)'; ctx.shadowBlur = 40; ctx.fillStyle = '#ffffff'; ctx.fillText(name, tx, ty); ctx.restore();
+  }
   // Everything outside the outermost band goes back to the solid background, so no glow reaches the corners.
   ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, H);
   ctx.translate(W / 2, H / 2); ctx.rotate(ang);
@@ -194,9 +196,9 @@ function zdata(rgba, w, x0, y0, cw, ch) {
   for (let y = 0; y < ch; y++) { raw[y * (cw * 4 + 1)] = 0; Buffer.from(rgba.buffer, rgba.byteOffset + ((y0 + y) * w + x0) * 4, cw * 4).copy(raw, y * (cw * 4 + 1) + 1); }
   return zlib.deflateSync(raw, { level: 9 });
 }
-function heroApng(W = 640, H = 208, n = 36, delayMs = 60, holdMs = 1800) {
+function heroApng(W = 640, H = 208, n = 36, delayMs = 60, holdMs = 1800, { srcW = 1600, srcH = 520, text = true } = {}) {
   const small = createCanvas(W, H), g = small.getContext('2d'), frames = [];
-  for (let i = 0; i <= n; i++) { g.clearRect(0, 0, W, H); g.drawImage(hero(1600, 520, i === n ? null : i / n), 0, 0, W, H); frames.push(Buffer.from(g.getImageData(0, 0, W, H).data)); }
+  for (let i = 0; i <= n; i++) { g.clearRect(0, 0, W, H); g.drawImage(hero(srcW, srcH, i === n ? null : i / n, { text }), 0, 0, W, H); frames.push(Buffer.from(g.getImageData(0, 0, W, H).data)); }
   const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(W, 0); ihdr.writeUInt32BE(H, 4); ihdr[8] = 8; ihdr[9] = 6;
   const parts = [Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr)];
   const actl = Buffer.alloc(8); actl.writeUInt32BE(frames.length, 0); actl.writeUInt32BE(0, 4); parts.push(chunk('acTL', actl));
@@ -222,6 +224,15 @@ function heroApng(W = 640, H = 208, n = 36, delayMs = 60, holdMs = 1800) {
 // --preview <dir>: only the banner (still and animated) into another folder, to look at before replacing the real ones.
 const pv = process.argv.indexOf('--preview');
 if (pv > 0) { const d = process.argv[pv + 1]; fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, 'banner.png'), hero().toBuffer('image/png')); fs.writeFileSync(path.join(d, 'banner-animated.png'), heroApng()); console.log('wrote', d); process.exit(0); }
+// --background [dir]: the loading-screen background: the banner's beam with no text, 16:9 (web/brand/background.jpg).
+const bg = process.argv.indexOf('--background');
+if (bg > 0) {
+  const d = process.argv[bg + 1] && !process.argv[bg + 1].startsWith('--') ? process.argv[bg + 1] : out;
+  fs.mkdirSync(d, { recursive: true });
+  // A JPEG (no transparency needed, a fraction of a PNG's size); the light running up the beam is animated by the page in CSS.
+  fs.writeFileSync(path.join(d, 'background.jpg'), hero(1920, 1080, null, { text: false }).toBuffer('image/jpeg', { quality: 0.9 }));
+  console.log('wrote background.jpg to', d); process.exit(0);
+}
 if (process.argv.includes('--animated')) { fs.writeFileSync(path.join(out, 'banner-animated.png'), heroApng()); console.log('wrote banner-animated.png'); process.exit(0); }
 png(lockup(1), 'logo.png');
 png(lockup(2), 'logo@2x.png');

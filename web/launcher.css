@@ -320,7 +320,8 @@ html:not(.dk-ready) .gw-toast { background: #fff5af; border: 1px solid #000; }
 
 /* Game loading screen (web/launcher.js loading()): the menu's background, dimmed, and a Derma window with the progress. */
 #launcher .gwl-load { display: grid; place-items: center; padding: 40px 16px 16px; color: var(--dk-text, #222); }
-#launcher .gwl-loadveil { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 45%, rgba(0, 0, 0, .25), rgba(0, 0, 0, .65)); }
+#launcher .gwl-loadbg { position: absolute; inset: 0; overflow: hidden; background: url("brand/background.jpg") center / cover no-repeat, #1194f0; }
+#launcher .gwl-loadbg::after { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 50%, rgba(0, 20, 60, .06), rgba(0, 20, 60, .32)); }
 #launcher .gwl-loadwin { width: min(520px, 100%); animation: gwl-loadin .35s cubic-bezier(.2, .9, .3, 1.1) both; }
 @keyframes gwl-loadin { from { opacity: 0; transform: translateY(14px) scale(.97); } }
 #launcher .gwl-loadwin .dk-tinfo { font-variant-numeric: tabular-nums; }

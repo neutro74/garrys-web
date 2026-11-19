@@ -885,16 +885,15 @@ function darkLoading() {
 }
 
 function loading(sel, backdrop) {
-  // Started straight into the game (Continue, a restart, a link): the menu's pictures were never shown, so show one now.
-  if (!backdrop.current) backgroundList().then(async (l) => { backdrop.stopped = false; await backdrop.start(l); backdrop.freeze(); }).catch(() => {});
   backdrop.freeze();
   const ed = sel.version ? { ...EDITIONS[sel.edition], name: sel.version.name, short: `${EDITIONS[sel.edition].short} + ${sel.version.addons.length} addons` } : EDITIONS[sel.edition], qual = Object.values(QUALITY).find((q) => q.scale === sel.scale) ?? QUALITY.std;
-  // The menu's background stays (dimmed), with a Derma window over it: the edition, what is happening, a DProgress bar, the
+  // The Garry's Web beam (web/brand/background.jpg, with the light running up it: .gw-light in web/index.html) and a Derma
+  // window over it: the edition, what is happening, a DProgress bar, the
   // four stages ticked off as they finish, the log, and Cancel.
   dermaReady();
   const el = document.createElement('div');
   el.className = 'loadscreen gwl-load dk';
-  el.innerHTML = `<div class="gwl-loadveil"></div>
+  el.innerHTML = `<div class="gwl-loadbg"><div class="gw-light"></div></div>
     <div class="dk-window gwl-loadwin" role="dialog" aria-label="Starting ${esc(ed.name)}">
       <div class="dk-title"><img src="${brand('icon-32.png')}" alt="">${esc(ed.name)}<span class="dk-tinfo" data-time></span><button type="button" class="dk-wbtn close" data-cancel data-tip="Cancel" aria-label="Cancel"></button></div>
       <div class="dk-panel gwl-loadbody">

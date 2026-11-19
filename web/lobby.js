@@ -14,7 +14,14 @@ export class Lobby {
     p2p.onChange(() => this.refresh());
   }
   get available() { return !!this.hub.url; }
-  connect() { if (this.hub.url && this.hub.state !== 'online' && this.hub.state !== 'connecting') { this.hub.connect(); this.hub.watchLobbies(true); } }
+  // The game list comes from the hub once this page watches it. The connection is often up already (kept from the launcher,
+  // or opened by the chat overlay), so watching is asked for whenever it is not on, not only when connecting; the hub
+  // client asks again by itself after a reconnect (web/hub.js).
+  connect() {
+    if (!this.hub.url) return;
+    if (this.hub.state !== 'online' && this.hub.state !== 'connecting') this.hub.connect();
+    if (!this.hub.watch) this.hub.watchLobbies(true);
+  }
   refresh() { if (this.hosting) this.hub.host({ ...this.hosting.info, players: 1 + this.p2p.status().peers.length }); }
   status() {
     return { hub: this.hub.state, me: this.hub.me?.name ?? this.hub.name, lobbies: this.lobbies, hosting: this.hosting && { ...this.hosting.info, id: this.hosting.id },

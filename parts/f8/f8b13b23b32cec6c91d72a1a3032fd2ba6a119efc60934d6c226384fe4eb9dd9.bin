@@ -1,0 +1,221 @@
+// Peer-to-peer play: the engine's UDP traffic (tools/lift/host/winsock.mjs) carried over WebRTC data channels.
+//
+// Topology is a star on a virtual 10.77.0.0/24 network: the host is 10.77.0.1, each joiner gets 10.77.0.N. Pairing needs no
+// server: the host makes an invite code (an SDP offer), the joiner answers with a reply code, the host enters the reply.
+// Codes carry the edition and a mismatch is refused, so one player on Extended never joins one on Base (the client would
+// otherwise look for addons it does not have).
+//
+// By default no STUN server is used, so connections work on the same network (LAN). Passing {internet: true} adds one public
+// STUN server to reach peers across NATs; that sends the browser's address to that server, so it is opt-in.
+import { createRing, RingReader, RingWriter } from '../tools/lift/host/ring.mjs';
+import { hubUrl, playerId } from './hub.js';
+
+const VNET = (10 << 24) | (77 << 16), HOST_IP = VNET | 1;
+const ipStr = (n) => [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.');
+const b64 = (u8) => btoa(String.fromCharCode(...u8)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+const unb64 = (s) => Uint8Array.from(atob(s.replaceAll('-', '+').replaceAll('_', '/')), (c) => c.charCodeAt(0));
+const pipe = async (bytes, stream) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
+async function pack(obj) { return 'GW1.' + b64(await pipe(new TextEncoder().encode(JSON.stringify(obj)), new CompressionStream('deflate-raw'))); }
+async function unpack(code) {
+  const m = /^GW1\.([A-Za-z0-9_-]+)$/.exec(String(code).trim());
+  if (!m) throw Error('That is not a game invite code.');
+  try { return JSON.parse(new TextDecoder().decode(await pipe(unb64(m[1]), new DecompressionStream('deflate-raw')))); } catch { throw Error('That invite code is damaged. Copy it again in full.'); }
+}
+const gathered = (pc, ms = 4000) => new Promise((resolve) => {
+  if (pc.iceGatheringState === 'complete') return resolve();
+  const done = () => { pc.removeEventListener('icegatheringstatechange', check); resolve(); };
+  const check = () => { if (pc.iceGatheringState === 'complete') done(); };
+  pc.addEventListener('icegatheringstatechange', check); setTimeout(done, ms);
+});
+
+// Stand-in for an RTCDataChannel through the hub (/pair in hub/hub.mjs), for players whose browsers cannot reach each other
+// directly (two players behind one router that does not loop traffic back, blocked local discovery, strict NATs). Same
+// surface as the data channel: readyState, send, close, onopen, onmessage, onclose. Frames carry one leading byte, 0 for
+// text and 1 for binary; the hub sends the text "{}" once both ends are connected.
+const RELAY_AFTER_MS = 5000;
+class HubChannel {
+  constructor(url, token) {
+    this.readyState = 'connecting'; this.relayed = true;
+    const ws = this.ws = new WebSocket(url.replace(/\/?$/, '/pair') + '?t=' + encodeURIComponent(token) + '&d=' + encodeURIComponent(playerId()));
+    ws.binaryType = 'arraybuffer';
+    ws.onmessage = (e) => {
+      const b = new Uint8Array(e.data);
+      if (!b.length) return;
+      if (b[0] === 0) {
+        const text = new TextDecoder().decode(b.subarray(1));
+        if (text === '{}') { if (this.readyState === 'connecting') { this.readyState = 'open'; this.onopen?.(); } return; }
+        this.onmessage?.({ data: text });
+      } else this.onmessage?.({ data: b.buffer.slice(1) });
+    };
+    ws.onclose = ws.onerror = () => { if (this.readyState === 'closed') return; this.readyState = 'closed'; this.onclose?.(); };
+  }
+  send(d) {
+    if (this.ws.readyState !== 1) throw Error('The relay is closed.');
+    const u = typeof d === 'string' ? new TextEncoder().encode(d) : d instanceof Uint8Array ? d : new Uint8Array(d), o = new Uint8Array(u.length + 1);
+    o[0] = typeof d === 'string' ? 0 : 1; o.set(u, 1); this.ws.send(o);
+  }
+  close() { const was = this.readyState; this.readyState = 'closed'; try { this.ws.close(); } catch { /* gone */ } if (was !== 'closed') this.onclose?.(); }
+}
+const token = () => b64(crypto.getRandomValues(new Uint8Array(18)));
+
+export class P2P {
+  // identity: { steamid (64-bit, as a string), name }: sent to each peer when its link opens, so every game can name every
+  // player (the host also passes on the others' names).
+  constructor({ edition = 'base', internet = false, identity = null } = {}) {
+    this.edition = edition; this.internet = internet; this.identity = identity; this.names = new Map();
+    this.toGuest = createRing(1 << 20); this.fromGuest = createRing(1 << 20);
+    this.writer = new RingWriter(this.toGuest); this.reader = new RingReader(this.fromGuest);
+    this.stats = { out: 0, in: 0, sendFail: 0, notOpen: 0, ringFull: 0, noPeer: 0 };
+    this.role = null; this.peers = new Map(); this.pending = new Map(); this.relayWait = new Set(); this.listeners = new Set(); this.ip = HOST_IP;
+    this.pump();
+  }
+  get rings() { return { netIn: this.toGuest, netOut: this.fromGuest }; }
+  onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  changed() { for (const fn of this.listeners) fn(this.status()); }
+  status() {
+    return { stats: { ...this.stats }, role: this.role, edition: this.edition, ip: ipStr(this.ip), peers: [...this.peers.keys()].map(ipStr), pending: [...this.pending.keys()].map(ipStr) };
+  }
+  setIp(ip) { this.ip = ip; const f = new Uint8Array(5); f[0] = 2; new DataView(f.buffer).setUint32(1, ip); this.writer.tryWrite(f); }
+  // Datagrams from the engine go to the peer that owns the destination; a joiner only ever talks to the host.
+  async pump() {
+    for (;;) {
+      await this.reader.wait();
+      for (let f; (f = this.reader.read());) this.route(f);
+    }
+  }
+  route(f) {
+    if (f[0] !== 1 || f.length < 13) return;
+    const dst = new DataView(f.buffer, f.byteOffset).getUint32(7) >>> 0;
+    if ((dst >>> 8) !== (VNET >>> 8) && dst !== 0xffffffff && (dst >>> 24) !== 127) return this.relayOut(f);
+    const broadcast = dst === 0xffffffff || ((dst >>> 8) === (VNET >>> 8) && (dst & 255) === 255);
+    const targets = broadcast ? [...this.peers.values()] : [this.peers.get(this.role === 'guest' ? HOST_IP : dst)];
+    if (!targets.length || !targets[0]) this.stats.noPeer++;
+    for (const ch of targets) { if (ch?.readyState !== 'open') { this.stats.notOpen++; continue; } try { ch.send(f); this.stats.out++; } catch { this.stats.sendFail++; } }
+  }
+  // Real servers (any address outside the virtual network) are reached through the hub's UDP relay (hub/servers.mjs):
+  // page -> hub [u16 local port][u32 ip][u16 port][payload], hub -> page [u32 ip][u16 port][u16 local port][payload].
+  relayOut(f) {
+    const r = this.relaySocket();
+    if (!r) { this.stats.noPeer++; return; }
+    const out = new Uint8Array(8 + f.length - 13), dv = new DataView(out.buffer), src = new DataView(f.buffer, f.byteOffset);
+    dv.setUint16(0, src.getUint16(5)); dv.setUint32(2, src.getUint32(7)); dv.setUint16(6, src.getUint16(11)); out.set(f.subarray(13), 8);
+    if (r.readyState === 1) { r.send(out); this.stats.relayOut = (this.stats.relayOut ?? 0) + 1; }
+    else if (this.relayQueue.length < 64) this.relayQueue.push(out);
+  }
+  relaySocket() {
+    if (this.relay && this.relay.readyState <= 1) return this.relay;
+    const url = hubUrl();
+    if (!url) return null;
+    if (Date.now() - (this.relayTried ?? 0) < 3000) return null;
+    this.relayTried = Date.now(); this.relayQueue = [];
+    const ws = this.relay = new WebSocket(url.replace(/\/?$/, '/udp') + '?d=' + encodeURIComponent(playerId()));   // d: this browser's id (bans)
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = () => { for (const b of this.relayQueue.splice(0)) ws.send(b); };
+    ws.onmessage = (e) => {
+      const b = new Uint8Array(e.data);
+      if (b.length < 8) return;
+      const v = new DataView(b.buffer), f = new Uint8Array(13 + b.length - 8), fv = new DataView(f.buffer);
+      f[0] = 1; fv.setUint32(1, v.getUint32(0)); fv.setUint16(5, v.getUint16(4)); fv.setUint32(7, this.ip); fv.setUint16(11, v.getUint16(6)); f.set(b.subarray(8), 13);
+      if (this.writer.tryWrite(f)) this.stats.relayIn = (this.stats.relayIn ?? 0) + 1; else this.stats.ringFull++;
+    };
+    return ws;
+  }
+  // Falls back to the hub relay when the direct link has not opened a few seconds after both sides have each other's codes.
+  relayLater(ip, relay) {
+    const url = hubUrl();
+    if (!relay || !url) return;
+    this.relayWait.add(ip);
+    setTimeout(() => {
+      this.relayWait.delete(ip);
+      if (this.peers.has(ip) || (this.role === 'host' && !this.pending.has(ip)) || (this.role === 'guest' && ip !== HOST_IP) || !this.role) return;
+      const ch = new HubChannel(url, relay), p = this.pending.get(ip);
+      if (p) p.hub = ch; else this.guestHub = ch;
+      this.attach(null, ch, ip);
+    }, RELAY_AFTER_MS);
+  }
+  // ?relayonly=1 (tests): no usable direct route, as between two browsers whose network blocks it, so the hub relay is used.
+  connection() {
+    const relayOnly = typeof location !== 'undefined' && new URLSearchParams(location.search).has('relayonly');
+    return new RTCPeerConnection({ iceServers: this.internet ? [{ urls: 'stun:stun.l.google.com:19302' }] : [], ...(relayOnly ? { iceTransportPolicy: 'relay' } : {}) });
+  }
+  attach(pc, ch, ip) {
+    ch.binaryType = 'arraybuffer';
+    ch.onopen = () => {
+      // Direct and relayed links race; the first one to open carries the game and the other is dropped.
+      const cur = this.peers.get(ip);
+      if (cur && cur !== ch && cur.readyState === 'open') { ch.close(); if (!ch.relayed) pc?.close(); return; }
+      if (ch.relayed) console.log(`p2p: ${ipStr(ip)} linked through the hub relay`);
+      this.peers.set(ip, ch); this.pending.delete(ip); this.changed();
+      const hello = (who) => { try { ch.send(JSON.stringify({ t: 'name', ...who })); } catch { /* closing */ } };
+      if (this.identity) hello(this.identity);
+      if (this.role === 'host') for (const [steamid, name] of this.names) hello({ steamid, name });
+    };
+    ch.onmessage = (e) => {
+      if (typeof e.data === 'string') return this.control(e.data, ch);
+      if (this.writer.tryWrite(new Uint8Array(e.data))) this.stats.in++; else this.stats.ringFull++;
+    };
+    const gone = () => {
+      if (this.peers.get(ip) !== ch && this.peers.has(ip)) return;          // the other link (direct or relayed) carries the game
+      if (!ch.relayed && this.relayWait.has(ip)) return;                     // a failed direct link still gets the relay
+      if (this.peers.get(ip) === ch) this.peers.delete(ip); this.pending.delete(ip); if (this.role === 'guest' && !this.peers.size) this.role = null; this.changed(); };
+    ch.onclose = gone;
+    if (pc) pc.onconnectionstatechange = () => { if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) gone(); };
+  }
+  // Control messages (text, unlike game datagrams): player names, handed to the game and, on the host, to the other peers.
+  control(text, from) {
+    let m; try { m = JSON.parse(text); } catch { return; }
+    if (m.t !== 'name' || !/^\d{1,20}$/.test(String(m.steamid))) return;
+    const name = String(m.name ?? '').replace(/[\u0000-\u001f]/g, '').slice(0, 31) || 'Player';
+    this.names.set(String(m.steamid), name);
+    this.setName(BigInt(m.steamid), name);
+    if (this.role === 'host') for (const ch of this.peers.values()) if (ch !== from && ch.readyState === 'open') ch.send(JSON.stringify({ t: 'name', steamid: String(m.steamid), name }));
+  }
+  setName(steamid, name) {
+    const b = new TextEncoder().encode(name), f = new Uint8Array(9 + b.length), dv = new DataView(f.buffer);
+    f[0] = 3; dv.setBigUint64(1, steamid); f.set(b, 9); this.writer.tryWrite(f);
+  }
+  // Host: one invite per joiner.
+  async createInvite() {
+    if (this.role === 'guest') throw Error('Leave the game you joined before hosting.');
+    this.role = 'host'; this.setIp(HOST_IP);
+    let ip = HOST_IP + 1; while (this.peers.has(ip) || this.pending.has(ip)) ip++;
+    if ((ip & 255) > 250) throw Error('Too many players.');
+    // Reliable and ordered: a joining client gets its signon data as one large message split into numbered pieces; lost
+    // pieces stall the join, and pieces arriving out of order (a resend among a newer sequence) make the engine discard
+    // the reassembly ("Ignoring duplicated split packet"). In-order delivery avoids both.
+    const pc = this.connection(), ch = pc.createDataChannel('gw', { ordered: true });
+    const relay = token();
+    this.pending.set(ip, { pc, ch, relay }); this.attach(pc, ch, ip);
+    await pc.setLocalDescription(await pc.createOffer()); await gathered(pc);
+    this.changed();
+    return { code: await pack({ v: 1, e: this.edition, ip, sdp: pc.localDescription.sdp, relay }), ip: ipStr(ip) };
+  }
+  async finishInvite(code) {
+    const a = await unpack(code);
+    if (a.e !== this.edition) throw Error(`That reply is from the ${a.e} edition; this game is ${this.edition}.`);
+    const p = this.pending.get(a.ip);
+    if (!p) throw Error('That reply is for an invite that is no longer open. Create a new one.');
+    await p.pc.setRemoteDescription({ type: 'answer', sdp: a.sdp });
+    this.relayLater(a.ip, p.relay);
+  }
+  // Joiner: returns the reply code to send back to the host.
+  async acceptInvite(code) {
+    const o = await unpack(code);
+    if (o.e !== this.edition) throw Error(`This invite is for the ${o.e} edition and you are running ${this.edition}. Both players must start the same edition.`);
+    if (this.role === 'host') throw Error('You are hosting. Stop hosting before joining another game.');
+    this.role = 'guest'; this.setIp(o.ip);
+    const pc = this.connection();
+    pc.ondatachannel = ({ channel }) => this.attach(pc, channel, HOST_IP);
+    await pc.setRemoteDescription({ type: 'offer', sdp: o.sdp });
+    await pc.setLocalDescription(await pc.createAnswer()); await gathered(pc);
+    this.changed();
+    this.relayLater(HOST_IP, o.relay);
+    return pack({ v: 1, e: this.edition, ip: o.ip, sdp: pc.localDescription.sdp });
+  }
+  leave() {
+    for (const { pc, hub } of this.pending.values()) { pc.close(); hub?.close(); }
+    this.guestHub?.close(); this.guestHub = null;
+    for (const ch of this.peers.values()) ch.close();
+    this.pending.clear(); this.peers.clear(); this.role = null; this.setIp(HOST_IP); this.changed();
+  }
+}

@@ -2,7 +2,7 @@
 // Voice channels between two players, against a local hub (no game is started):
 //   node tools/test-voice.mjs [--out run/voice]
 // One browser with Chromium's fake microphone (a test tone); the second player is a separate browser context in it. Both
-// sign up, join the Lounge channel and must hear each other talking. Then the in-game overlay (web/overlay.js) is made in
+// sign up, join the Lounge channel and must hear each other talking (Opus through the hub, hub/voice.mjs). Then the in-game overlay (web/overlay.js) is made in
 // the first page on the same connection, as when the game starts: its voice HUD must show the channel and Ctrl+Shift+M /
 // Ctrl+Shift+D must mute and deafen.
 import { spawn } from 'node:child_process';
@@ -51,8 +51,8 @@ async function player(label, user) {
 const suffix = String(Math.floor(Math.random() * 1e5));
 const A = await player('amy', 'amy' + suffix), B = await player('bob', 'bob' + suffix);
 for (const b of [A, B]) await b.eval(`[...document.querySelectorAll('.gwc-vc')].find((e) => e.textContent.includes('Lounge')).click()`);
-await until(A, `(async () => { const vc = ${VC}; return vc.current && [...vc.peers.values()].some((p) => p.pc.connectionState === 'connected'); })()`, 'amy is connected to bob');
-await until(B, `(async () => { const vc = ${VC}; return vc.current && [...vc.peers.values()].some((p) => p.pc.connectionState === 'connected'); })()`, 'bob is connected to amy');
+await until(A, `(async () => { const vc = ${VC}; return vc.current === 'lounge' && !!vc.encoder; })()`, 'amy is in the channel, sending');
+await until(B, `(async () => { const vc = ${VC}; return vc.current === 'lounge' && !!vc.encoder; })()`, 'bob is in the channel, sending');
 // The fake microphone plays a tone, so each side should see the other talking.
 await until(A, `(async () => { const vc = ${VC}; const me = (await import('/web/hub.js')).sharedHub().me.id; return [...vc.speaking].some((id) => id !== me); })()`, 'amy hears bob talking');
 await until(B, `(async () => { const vc = ${VC}; const me = (await import('/web/hub.js')).sharedHub().me.id; return [...vc.speaking].some((id) => id !== me); })()`, 'bob hears amy talking');

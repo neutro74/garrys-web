@@ -1,11 +1,15 @@
 // Voice channels, like a Discord server's, with "Join to create" (the way Discord bots such as VoiceMaster do it): joining
 // that channel makes a channel of your own, which you can rename, lock (private: only people you let in), give a user limit,
-// kick from or hand over. It disappears when the last person leaves. The audio itself goes browser to browser (WebRTC); the
-// hub only keeps the list and passes the connection offers between people in the same channel.
+// kick from or hand over. It disappears when the last person leaves.
+// The audio goes through the hub (any network that reaches chat can do voice; browser-to-browser links fail on many school
+// and home networks): each member's page sends Opus frames as binary WebSocket messages on its chat connection, and the
+// hub passes them to the others in the channel, prefixed with the sender: [u8 id length][id][the sender's frame].
+// Frames from a muted member are dropped here; each sender is limited to about 6 KB/s (Opus voice needs 3-4).
 // Messages from a client (signed-in accounts only):
 //   {t:'vc-join', id}                 join a channel ('create' makes your own)
 //   {t:'vc-leave'}
-//   {t:'vc-signal', to, data}         an offer/answer/ICE candidate for another member (by connection id)
+//   binary frames                     audio (Opus) while in a channel; see above
+//   {t:'vc-signal', to, data}         (older pages) an offer/answer/ICE candidate for another member (by connection id)
 //   {t:'vc-state', muted, deafened}
 //   {t:'vc-edit', id, name?, locked?, limit?}   owner (or admin)
 //   {t:'vc-allow', id, user}  {t:'vc-deny', id, user}  {t:'vc-kick', id, user}  {t:'vc-transfer', id, user}   owner (or admin)
@@ -33,9 +37,22 @@ export function createVoice({ clients, isAdmin, log = console.log }) {
   const memberBy = (ch, account) => [...ch.members].find((c) => c.account === account);
   const canManage = (c, ch) => ch.kind === 'temp' && (ch.owner === c.account || isAdmin(c.account));
 
-  function leave(c) {
+  // Audio from a member: to everyone else in the channel (their pages decode and play it).
+  const AUDIO_RATE = 6144, AUDIO_BURST = 16384, MAX_FRAME = 1500;
+  function relay(c, b) {
+    const ch = channels.get(where.get(c)); if (!ch || b.length < 2 || b.length > MAX_FRAME) return;
+    const st = state.get(c); if (st?.muted || st?.deafened) return;
+    const now = Date.now(), r = c.vcRate ??= { budget: AUDIO_BURST, at: now };
+    r.budget = Math.min(AUDIO_BURST, r.budget + ((now - r.at) * AUDIO_RATE) / 1000); r.at = now;
+    if (r.budget < b.length) return;
+    r.budget -= b.length;
+    const id = Buffer.from(c.id, 'latin1'), out = Buffer.concat([Buffer.from([id.length]), id, b]);
+    for (const m of ch.members) if (m !== c && !state.get(m)?.deafened) m.sendBinary(out);
+  }
+  // switching: moving straight into another channel (the page keeps its microphone and audio running).
+  function leave(c, switching = false) {
     const id = where.get(c); if (!id) return;
-    where.delete(c); state.delete(c);
+    where.delete(c); state.delete(c); c.onBinary = null;
     const ch = channels.get(id);
     if (ch) {
       ch.members.delete(c);
@@ -45,16 +62,17 @@ export function createVoice({ clients, isAdmin, log = console.log }) {
         else if (ch.owner === c.account) ch.owner = [...ch.members][0].account;   // the next person in charge
       }
     }
-    c.send({ t: 'vc-left' });
+    if (!switching) c.send({ t: 'vc-left' });
     broadcast();
   }
   function join(c, ch) {
     if (where.get(c) === ch.id) return;
-    leave(c);
+    leave(c, true);
     if (ch.limit && ch.members.size >= ch.limit && !isAdmin(c.account)) throw Error(`${ch.name} is full.`);
     if (ch.members.size >= MAX_PER_CHANNEL) throw Error(`${ch.name} is full.`);
     const peers = [...ch.members].map((m) => m.id);
     ch.members.add(c); where.set(c, ch.id); state.set(c, { muted: false, deafened: false });
+    c.onBinary = (b) => relay(c, b);
     c.send({ t: 'vc-joined', id: ch.id, peers });
     broadcast();
   }

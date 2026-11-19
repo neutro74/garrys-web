@@ -18,7 +18,7 @@ test.after(() => proc.kill());
 
 function client() {
   const ws = new WebSocket(`ws://127.0.0.1:${PORT}`), queue = [], waiters = [];
-  ws.onmessage = (e) => { const m = JSON.parse(e.data); const w = waiters.findIndex((x) => x.t === m.t); if (w >= 0) waiters.splice(w, 1)[0].r(m); else queue.push(m); };
+  ws.onmessage = (e) => { if (typeof e.data !== 'string') return; const m = JSON.parse(e.data); const w = waiters.findIndex((x) => x.t === m.t); if (w >= 0) waiters.splice(w, 1)[0].r(m); else queue.push(m); };
   const next = (t) => { const i = queue.findIndex((m) => m.t === t); if (i >= 0) return Promise.resolve(queue.splice(i, 1)[0]); return new Promise((r) => waiters.push({ t, r })); };
   return { ws, next, send: (m) => ws.send(JSON.stringify(m)), open: new Promise((r) => (ws.onopen = r)) };
 }
@@ -232,4 +232,27 @@ test('presence: a hosted game shows on the host, for Join in chat', async () => 
   do p = await b.c.next('presence'); while (p.user !== a.user);
   assert.equal(p.game, undefined);
   for (const x of [a.c, b.c]) x.ws.close();
+});
+
+test('voice: audio frames go through the hub to the others in the channel', async () => {
+  const a = await account('vca'), b = await account('vcb'), c = await account('vcc');
+  const bin = (x) => new Promise((r) => { x.ws.binaryType = 'arraybuffer'; const prev = x.ws.onmessage; x.ws.addEventListener('message', function h(e) { if (typeof e.data !== 'string') { x.ws.removeEventListener('message', h); r(new Uint8Array(e.data)); } }); });
+  for (const x of [a, b]) { x.c.send({ t: 'vc-join', id: 'lounge' }); await x.c.next('vc-joined'); }
+  c.c.send({ t: 'vc-join', id: 'gaming' }); await c.c.next('vc-joined');
+  const gotB = bin(b.c);
+  let cHeard = false; c.c.ws.addEventListener('message', (e) => { if (typeof e.data !== 'string') cHeard = true; });
+  a.c.ws.send(new Uint8Array([1, 0xfc, 0xff, 0xfe]));
+  const f = await gotB;
+  const n = f[0], from = new TextDecoder().decode(f.subarray(1, 1 + n));
+  assert.equal(from, a.welcome.id); assert.deepEqual([...f.subarray(1 + n)], [1, 0xfc, 0xff, 0xfe]);
+  // Muted: nothing is passed on. Another channel never hears it. Leaving and sending again does not drop the chat connection.
+  a.c.send({ t: 'vc-state', muted: true, deafened: false }); await new Promise((r) => setTimeout(r, 200));
+  let bHeard = false; b.c.ws.addEventListener('message', (e) => { if (typeof e.data !== 'string') bHeard = true; });
+  a.c.ws.send(new Uint8Array([1, 2, 3])); await new Promise((r) => setTimeout(r, 300));
+  assert.equal(bHeard, false); assert.equal(cHeard, false);
+  a.c.send({ t: 'vc-leave' }); await a.c.next('vc-left');
+  a.c.ws.send(new Uint8Array([1, 2, 3])); a.c.send({ t: 'ping' }); await a.c.next('pong');
+  // Switching channels: no vc-left, straight to vc-joined.
+  b.c.send({ t: 'vc-join', id: 'music' }); const j = await b.c.next('vc-joined'); assert.equal(j.id, 'music');
+  for (const x of [a.c, b.c, c.c]) x.ws.close();
 });

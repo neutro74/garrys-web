@@ -35,9 +35,12 @@ export class Hub extends EventTarget {
     this.setState('connecting');
     let ws;
     try { ws = new WebSocket(this.url); } catch { this.setState('offline'); return; }
-    this.ws = ws;
+    this.ws = ws; ws.binaryType = 'arraybuffer';
     ws.onopen = () => { this.retry = 0; this.send({ t: 'hello', name: this.name, device: playerId(), activity: this.activity }); };   // device: this browser's id, for moderation
-    ws.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } this.message(m); };
+    ws.onmessage = (e) => {
+      if (typeof e.data !== 'string') { this.emit('binary', e.data); return; }   // voice audio (web/voice-chat.js)
+      let m; try { m = JSON.parse(e.data); } catch { return; } this.message(m);
+    };
     ws.onclose = () => {
       this.ws = null; this.me = null; if (!this.banned) this.setState('offline');
       if (this.closing) return;
@@ -47,6 +50,8 @@ export class Hub extends EventTarget {
   }
   close() { this.closing = true; clearTimeout(this.timer); this.ws?.close(); }
   send(m) { if (this.ws?.readyState === 1) { this.ws.send(JSON.stringify(m)); return true; } return false; }
+  // Binary frames (voice audio); dropped rather than queued when the connection is backed up.
+  sendBinary(buf) { if (this.ws?.readyState === 1 && this.ws.bufferedAmount < 64 * 1024) { this.ws.send(buf); return true; } return false; }
   message(m) {
     if (m.t === 'welcome') {
       const first = !this.me;

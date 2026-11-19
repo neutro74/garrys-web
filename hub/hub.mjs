@@ -84,7 +84,9 @@ class Conn {
         if (this.parts.reduce((a, p) => a + p.length, 0) > LIMITS.frame) return this.close(1009);
         if (fin) { const text = Buffer.concat(this.parts).toString('utf8'); this.parts = []; this.message(text); }
       } else if (op === 2) {
-        if (!this.onBinary || !fin) return this.close(1003);
+        if (!fin) return this.close(1003);
+        // Chat connections carry voice audio only while in a voice channel (hub/voice.mjs); a frame just after leaving is dropped.
+        if (!this.onBinary) { if (this.relay || !this.name) return this.close(1003); continue; }
         this.onBinary(body);
       }
     }

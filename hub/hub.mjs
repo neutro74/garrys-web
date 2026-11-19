@@ -275,10 +275,17 @@ function handle(c, m) {
     c.name = name; c.device = /^\d{1,12}$/.test(String(m.device ?? '')) ? String(m.device) : null;
     c.activity = cleanActivity(m.activity);
     admin.seen(c);
-    if (refuseBanned(c)) return;
+    // A ban by address or browser waits a few seconds for the page to sign in: an admin account is never locked out (an
+    // admin on the same network as a banned player shares its address). Until then the connection can only sign in.
+    if (admin.banned({ ip: c.ip, device: c.device, account: null })) {
+      c.send({ t: 'welcome', id: c.id, name, key: ownerKey(c), rooms: [], online: 0, presence: [] });
+      clearTimeout(c.banHold); c.banHold = setTimeout(() => { c.banHold = null; refuseBanned(c); }, 6000);
+      return;
+    }
     c.send({ t: 'welcome', id: c.id, name, key: ownerKey(c), rooms: roomList(), online: clients.size, presence: onlineAccounts() });
     return voice.sendList(c);
   }
+  if (c.banHold && m.t !== 'auth') return;
   if (MUTED.has(m.t)) { const mu = admin.muted(c); if (mu) throw Error(`You are muted${mu.until ? ' until ' + new Date(mu.until).toUTCString() : ''}${mu.reason ? ': ' + mu.reason : ''}.`); }
   if (!c.name) throw Error('Say hello first.');
   switch (m.t) {
@@ -362,6 +369,12 @@ function handle(c, m) {
       const before = c.account, u = accounts.verify(m.user, m.token);
       c.account = u ?? null;
       admin.seen(c);
+      if (c.banHold) {
+        clearTimeout(c.banHold); c.banHold = null;
+        if (refuseBanned(c)) return;
+        c.send({ t: 'welcome', id: c.id, name: c.name, key: ownerKey(c), rooms: roomList(), online: clients.size, presence: onlineAccounts() });   // an admin: carry on
+        voice.sendList(c);
+      }
       if (refuseBanned(c)) return;
       c.send({ t: 'authed', user: u ?? null, admin: !!u && admin.isAdmin(u), ...(u ? { status: profiles.status(u) } : {}) });
       if (before !== c.account) {
@@ -517,6 +530,7 @@ const emotes = createEmotes({ accounts, isAdmin: (u) => admin.isAdmin(u), chatIm
 const voice = createVoice({ clients: () => clients, isAdmin: (u) => !!u && admin.isAdmin(u), log: console.log });
 // A banned player's socket is told why, then closed (the page stops reconnecting).
 function refuseBanned(c) {
+  if (c.account && admin.isAdmin(c.account)) return false;   // admins are never locked out
   const b = admin.banned({ ip: c.ip, device: c.device, account: c.account });
   if (!b) return false;
   c.send({ t: 'banned', ...admin.banInfo(b) }); c.close(4003); return true;
@@ -524,7 +538,7 @@ function refuseBanned(c) {
 const server = http.createServer(async (req, res) => {
   if (await admin(req, res, { ip: clientIp(req), headers: cors(req) })) return;
   const ban = admin.banned({ ip: clientIp(req) });
-  if (ban && req.method !== 'OPTIONS' && req.url !== '/health') {
+  if (ban && req.method !== 'OPTIONS' && req.url !== '/health' && !admin.isAdmin(accounts.userOf(req))) {
     res.writeHead(403, { 'Content-Type': 'application/json', ...cors(req) });
     return res.end(JSON.stringify({ error: 'You are banned from Garry\'s Web.', banned: true, ...admin.banInfo(ban) }));
   }

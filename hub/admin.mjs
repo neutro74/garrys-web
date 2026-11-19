@@ -144,8 +144,16 @@ export function createAdmin({ accounts, hub, automod = () => null }) {
   }
   const cpuTemp = () => { try { return +fs.readFileSync('/sys/class/thermal/thermal_zone0/temp', 'utf8') / 1000; } catch { return null; } };
 
+  // An address or browser an admin account uses (now, or lately) is refused as a ban or mute target: on a shared network
+  // (a school, a household) it would hit the admin too. Ban those players by browser id or account instead.
+  const adminUses = (e) => {
+    const seenNow = [...hub.clients().map((c) => ({ ip: c.ip, device: c.device, account: c.account })), ...recent];
+    const hit = seenNow.find((r) => r.account && ADMINS.has(r.account) && ((e.ip && r.ip === e.ip) || (e.device && r.device === e.device)));
+    if (hit) throw Error(`${e.ip && hit.ip === e.ip ? `The address ${e.ip}` : `That browser`} is also used by the admin account ${hit.account} (a shared network or device), so this would lock them out too. ${e.ip && hit.ip === e.ip ? 'Untick the address and ban by browser id or account instead.' : 'Ban by account instead.'}`);
+  };
   const actions = {
     ban(b, who) {
+      adminUses(target(b.target));
       const e = { id: crypto.randomBytes(5).toString('hex'), ...target(b.target), reason: String(b.reason ?? '').slice(0, 200), until: minutes(b.minutes), by: who, at: now(), label: String(b.label ?? '').slice(0, 40) };
       bans.set([...live(bans.get()), e]);
       const n = hub.kickWhere((p) => covers(e, p), { t: 'banned', ...banInfo(e) });
@@ -153,6 +161,7 @@ export function createAdmin({ accounts, hub, automod = () => null }) {
     },
     unban(b) { bans.set(live(bans.get()).filter((e) => e.id !== b.id)); return {}; },
     mute(b, who) {
+      if (who !== 'automod') adminUses(target(b.target));
       const e = { id: crypto.randomBytes(5).toString('hex'), ...target(b.target), reason: String(b.reason ?? '').slice(0, 200), until: minutes(b.minutes || 60), by: who, at: now(), label: String(b.label ?? '').slice(0, 40) };
       mutes.set([...live(mutes.get()), e]); return { mute: e };
     },

@@ -256,3 +256,26 @@ test('voice: audio frames go through the hub to the others in the channel', asyn
   b.c.send({ t: 'vc-join', id: 'music' }); const j = await b.c.next('vc-joined'); assert.equal(j.id, 'music');
   for (const x of [a.c, b.c, c.c]) x.ws.close();
 });
+
+test('bans never lock out an admin; banning an admin\'s own browser is refused', async () => {
+  const base = `http://127.0.0.1:${PORT}`;
+  const reg = await (await fetch(base + '/acct/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: 'neutro74', pass: 'secret1' }) })).json();
+  const auth = { Authorization: `Bearer ${reg.token}`, 'X-User': 'neutro74' };
+  const adminDev = '424242', otherDev = '515151';
+  const signIn = async (device, withAccount) => {
+    const c = client(); await c.open; c.send({ t: 'hello', name: 'P', device }); await c.next('welcome');
+    if (withAccount) { c.send({ t: 'auth', user: 'neutro74', token: reg.token }); await c.next('authed'); }
+    return c;
+  };
+  const me = await signIn(adminDev, true);
+  const { token } = await (await fetch(base + '/admin/unlock', { method: 'POST', headers: auth })).json();
+  const act = (name, body) => fetch(`${base}/admin/${name}`, { method: 'POST', headers: { ...auth, 'X-Admin': token, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const refused = await act('ban', { target: { device: adminDev }, reason: 'oops' });
+  assert.equal(refused.status, 400); assert.match((await refused.json()).error, /admin account neutro74/);
+  assert.equal((await act('ban', { target: { device: otherDev }, reason: 'bye' })).status, 200);
+  const guest = await signIn(otherDev, false);
+  assert.ok((await guest.next('banned')));
+  const adminOnBannedBrowser = await signIn(otherDev, true);
+  adminOnBannedBrowser.send({ t: 'ping' }); assert.ok(await adminOnBannedBrowser.next('pong'));
+  for (const x of [me, guest, adminOnBannedBrowser]) x.ws.close();
+});

@@ -19,7 +19,7 @@ export function mountWorkshop(el) {
   el.classList.add('gww');
   el.innerHTML = `
     <aside class="dk-tree gww-side">
-      <form class="gww-search" data-search><input data-q placeholder="Search the Workshop" spellcheck="false" autocomplete="off"><button class="dk-btn" aria-label="Search"><img class="si" alt="" src="${icon('magnifier')}"></button></form>
+      <form class="gww-search" data-search><input data-q placeholder="Search addons" aria-label="Search the Workshop" spellcheck="false" autocomplete="off"><button class="dk-btn" aria-label="Search"><img class="si" alt="" src="${icon('magnifier')}"></button></form>
       <div class="dk-node head">Browse</div>${SORTS.map(([k, l, ic]) => `<button type="button" class="dk-node kid" data-sort="${k}"><img class="si" alt="" src="${icon(ic)}"><span>${l}</span></button>`).join('')}
       <div class="dk-node head">Type</div>${TYPES.map(([k, l, ic]) => `<button type="button" class="dk-node kid" data-type="${k}"><img class="si" alt="" src="${icon(ic)}"><span>${l}</span></button>`).join('')}
       <div class="dk-node head">This browser</div><button type="button" class="dk-node kid" data-installed><img class="si" alt="" src="${icon('drive_disk')}"><span>Installed</span><b class="dk-badge" data-count hidden></b></button>
@@ -75,6 +75,7 @@ export function mountWorkshop(el) {
   let lazyOff = false;   // pictures in the details window and the Installed list load at once; the grid's as they scroll in
   // Workshop pictures as images with CORS (Steam allows it), which cross-origin isolated pages may show; CSS backgrounds may not be.
   const pic = (url, px, cls) => { const i = new Image(); i.className = cls; i.alt = ''; i.loading = px <= 256 && cls === 'gww-img' && !lazyOff ? 'lazy' : 'eager'; i.decoding = 'async'; i.crossOrigin = 'anonymous'; if (url) i.src = thumb(url, px); i.onerror = () => i.classList.add('none'); return i; };
+  const compact = (n) => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
   function card(it) {
     const c = h('div', 'gww-card dk-panel');
     c.dataset.id = it.id;
@@ -82,9 +83,9 @@ export function mountWorkshop(el) {
     picBtn.onclick = () => details(it);
     const votes = it.up + it.down ? Math.round((100 * it.up) / (it.up + it.down)) : null, w = impact(it.size);
     c.append(picBtn, h('b', 'gww-name', it.title),
-      h('small', 'gww-meta', `${size(it.size)}${it.subs ? ` · ${it.subs.toLocaleString()} subs` : ''}${votes !== null ? ` · ${votes}%` : ''}`),
+      h('small', 'gww-meta', `${size(it.size)}${it.subs ? ` · ${compact(it.subs)} subs` : ''}${votes !== null ? ` · ${votes}%` : ''}`),
       h('span', 'gww-weight', w.label), button(it));
-    c.querySelector('.gww-weight').style.color = w.color;
+    c.querySelector('.gww-weight').style.color = w.color; c.querySelector('.gww-name').title = it.title;
     return c;
   }
   function button(it) {

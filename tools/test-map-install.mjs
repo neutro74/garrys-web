@@ -19,7 +19,9 @@ const profile = path.resolve('run/map-install-profile'); fs.rmSync(profile, { re
 const MAP = 'gm_wasmtest';
 const gmaFile = path.join(out, `${MAP}.gma`);
 const bsp = fs.readFileSync(path.join(repo, 'dist/gmod-web-v46/game/garrysmod/maps/gm_flatgrass.bsp'));
-fs.writeFileSync(gmaFile, writeGma({ name: 'Map Test', description: '{"description":"","type":"map","tags":["build"]}', files: new Map([[`maps/${MAP}.bsp`, bsp]]) }));
+// The addon brings its own picture (maps/thumb/<map>.png), which Start New Game must show.
+const thumb = fs.readFileSync(path.join(repo, 'web/brand/icon-192.png'));
+fs.writeFileSync(gmaFile, writeGma({ name: 'Map Test', description: '{"description":"","type":"map","tags":["build"]}', files: new Map([[`maps/${MAP}.bsp`, bsp], [`maps/thumb/${MAP}.png`, thumb]]) }));
 
 const port = 8100 + Math.floor(Math.random() * 500);
 const server = spawn('node', [path.join(repo, 'web/server.mjs'), '--port', String(port)], { stdio: ['ignore', 'ignore', 'inherit'] });
@@ -66,6 +68,20 @@ for (let i = 0; i < 10 && now !== 'true'; i++) { await sleep(2000); now = await 
 const nowListed = await luaAsk('nowlist', `string.find(util.TableToJSON(GetMapList() or {}) or "", "${MAP}", 1, true) ~= nil`);
 console.log(`without a restart: file ${now}, in GetMapList ${nowListed}`);
 console.log('engine.GetAddons:', await luaAsk('getaddons0', `(function() local t = {} for _, a in ipairs(engine.GetAddons()) do t[#t + 1] = (a.title or "?") .. "/" .. tostring(a.mounted) .. "/" .. tostring(a.file) .. "/" .. tostring(a.wsid) end return table.concat(t, ";") end)()`));
+// Its picture in Start New Game (the menu's map list, the Sandbox category or wherever it was sorted).
+await browser.eval(`(${MENU}).location.hash = '#/newgame/'`).catch(() => {});
+await sleep(3000);
+const pic = await until(`(() => {
+  const d = (${MENU}).document, cats = [...d.querySelectorAll('li.category')];
+  const img = [...d.querySelectorAll('img.thumbnail')].find((i) => i.offsetParent && /${MAP}/i.test(i.closest('li')?.textContent ?? ''));
+  if (!img) { const k = (+window.__mapCat || 0) % Math.max(1, cats.length); window.__mapCat = k + 1; cats[k]?.click(); return null; }
+  img.scrollIntoView(); img.loading = 'eager';
+  return img.complete && img.naturalWidth ? img.src.slice(0, 40) + ' ' + img.naturalWidth + 'x' + img.naturalHeight : null;
+})()`, 60);
+console.log('map picture in Start New Game:', pic);
+if (!pic) console.log('debug:', await browser.eval(`(async () => { const w = ${MENU}, d = w.document; const imgs = [...d.querySelectorAll('img.thumbnail')].map((i) => [i.src.slice(-60), i.dataset.gwMapimg ?? '-', i.complete, i.naturalWidth]); let r; try { r = await w.__gmodHost('map-image', { map: '${MAP}' }); } catch (e) { r = 'ERR ' + e.message; } return JSON.stringify({ imgs, r, extras: !!w.__gwJoinLobby }); })()`).catch((e) => e.message));
+await shot('newgame');
+if (!pic?.startsWith('data:image/') || !pic.includes('192x192')) await fail(`the map's own picture is not shown (${pic})`);
 await browser.eval(`(${MENU}).location.hash = '#/'`).catch(() => {});
 await shot('installed');
 if (now !== 'true' || nowListed !== 'true') console.log('NOT LISTED without a restart (going on to the restart check)');

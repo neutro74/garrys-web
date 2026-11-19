@@ -91,6 +91,8 @@ try {
   // The engine's player name comes from its name cvar (shown to other players); set it from the profile.
   const safe = String(params.name).replace(/[\u0000-\u001f"';]/g, '').trim().slice(0, 31);
   if (safe) params.cmd = `${params.cmd ?? ''} +name "${safe}"`.trim();
+  // The launcher's Options (graphics quality, frame rate, volume...) first, so an explicit ?cmd= still wins.
+  params.cmd = `${settingsCommand()} ${params.cmd ?? ''}`.trim();
   // Player colour from the launcher's Profile (r g b, 0..1), applied like the in-game Player Model editor does.
   const color = localStorage.getItem('garrys-wasm.playercolor');
   if (/^[\d.]+ [\d.]+ [\d.]+$/.test(color ?? '')) params.cmd = `${params.cmd ?? ''} +cl_playercolor "${color}"`.trim();
@@ -102,6 +104,7 @@ if (version) { params.edition = version.edition; params.disabledAddons = (versio
 try { params.disabledAddons ??= JSON.parse(localStorage.getItem('garrys-wasm.disabled-addons') ?? '[]').join(','); } catch { /* storage blocked */ }
 
 import { GameAudio } from './audio.js';
+import { settingsCommand } from './game-settings.js';
 import { createAudioRing } from '../tools/lift/host/waveout.mjs';
 import { GameInput } from './input.js';
 import { HtmlPanels } from './html-panels.js';

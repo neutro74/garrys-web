@@ -150,6 +150,7 @@ body { background: #000; }
 #launcher .gwl-me span { overflow: hidden; text-overflow: ellipsis; }
 #launcher .gwl-ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #launcher .gwl-hint, #launcher .dk .hint { color: var(--dk-mid); font-size: 12px; margin: 6px 0; }
+#launcher :is(.savelist, .vlist) > .hint { margin: 0; padding: 10px 8px; text-align: center; }
 
 /* Play */
 #launcher .gwl-play { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 6px; height: 100%; min-height: 420px; }
@@ -201,6 +202,17 @@ body { background: #000; }
 #launcher .gwl-options { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; align-items: start; }
 #launcher .gwl-col { display: flex; flex-direction: column; gap: 6px; }
 #launcher .gwl-col h2 { font-size: 18px; margin-bottom: 2px; }
+#launcher .gwl-game .panel-body { display: flex; flex-direction: column; gap: 8px; }
+#launcher .gwl-set { display: grid; grid-template-columns: 120px minmax(0, 1fr); align-items: center; gap: 2px 8px; }
+#launcher .gwl-set > b { font-weight: bold; }
+#launcher .gwl-set > small { grid-column: 2; color: var(--dk-mid); font-size: 11px; }
+#launcher .gwl-seg { display: flex; flex-wrap: wrap; gap: 2px; }
+#launcher .gwl-slide { display: flex; align-items: center; gap: 6px; min-width: 0; }
+#launcher .gwl-slide input { flex: 1; min-width: 0; accent-color: #3aa9f5; }
+#launcher .gwl-slide output { flex: none; width: 52px; text-align: right; font-variant-numeric: tabular-nums; color: var(--dk-mid); }
+#launcher .gwl-check { display: flex; align-items: center; grid-template-columns: none; }
+#launcher .gwl-game .gwl-hint { margin: 0; }
+#launcher .gwl-game .row { display: flex; gap: 4px; flex-wrap: wrap; }
 
 /* ---- The panels (Saves, Versions, Profile, Files, Controls) inside a tab ---- */
 #launcher .panel.gwl-panel { border: 8px solid transparent; border-image: var(--dk-panel-bright) 16 fill / 8px; color: var(--dk-text); user-select: text; }
@@ -338,7 +350,9 @@ html:not(.dk-ready) .gw-toast { background: #fff5af; border: 1px solid #000; }
 #launcher .gwl-steps li[data-state="now"] { color: var(--dk-text, #222); font-weight: bold; }
 #launcher .gwl-steps li[data-state="done"] { color: #3a8a2a; }
 #launcher .gwl-steps .si { width: 16px; height: 16px; image-rendering: pixelated; }
-#launcher .gwl-loadlog { height: 84px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; padding: 3px 5px; border: 1px solid #b4b4b4; border-radius: 2px; background: #fff; color: #777; font: 11px Consolas, "DejaVu Sans Mono", monospace; }
+#launcher .gwl-loadlog { position: relative; height: 84px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; padding: 3px 5px; border: 1px solid #b4b4b4; border-radius: 2px; background: #fff; color: #777; font: 11px Consolas, "DejaVu Sans Mono", monospace; }
+/* Older lines fade out at the top instead of being cut through the middle. */
+#launcher .gwl-loadlog::before { content: ""; position: absolute; inset: 0 0 auto; height: 34px; background: linear-gradient(#fff 20%, rgba(255, 255, 255, 0)); pointer-events: none; z-index: 1; }
 #launcher .gwl-loadlog div { flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #launcher .gwl-loadlog div:last-child { color: #222; }
 #launcher .gwl-loadfoot { display: flex; align-items: center; justify-content: flex-end; gap: 4px; flex-wrap: wrap; }
@@ -373,7 +387,10 @@ html:not(.dk-ready) .gw-toast { background: #fff5af; border: 1px solid #000; }
 #launcher .gww-weight { font-size: 11px; font-weight: bold; }
 #launcher .gww-install { display: inline-flex; align-items: center; justify-content: center; gap: 4px; margin-top: auto; }
 #launcher .gww-install:disabled { opacity: .8; }
-#launcher .gww-foot { display: flex; justify-content: center; min-height: 22px; color: #e5e8ea; }
+#launcher .gww-foot { display: flex; justify-content: center; align-items: center; min-height: 22px; color: #e5e8ea; text-align: center; }
+/* Nothing in the grid (an error, no results): the message in the middle of the page, not at the bottom. */
+#launcher .gww-grid:empty { display: none; }
+#launcher .gww-grid:empty ~ .gww-foot { flex: 1; }
 #launcher .gww-row { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 5px 8px; color: var(--dk-text, #222); }
 #launcher .gww-rpic { flex: none; width: 40px; height: 40px; border-radius: 2px; background: #555 center / cover no-repeat; }
 #launcher .gww-rinfo { display: flex; flex-direction: column; flex: 1; min-width: 0; }
@@ -403,3 +420,4 @@ html:not(.dk-ready) .gw-toast { background: #fff5af; border: 1px solid #000; }
 #launcher .gwl-ban { width: min(460px, 100%); }
 #launcher .gwl-ban .gwl-banhead { font: bold 16px var(--dk-large, Helvetica, Arial, sans-serif); color: #b22; }
 #launcher .gwl-ban p { margin: 0; white-space: normal; }
+#launcher .gwl-headnote { margin-left: 6px; font-weight: normal; font-size: 11px; opacity: .9; }

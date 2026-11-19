@@ -66,7 +66,9 @@ function readAsset(host, rel) {
   rel = path.posix.normalize('/' + rel).slice(1);
   if (host.toLowerCase() === 'mapimage') {
     const map = rel.replace(/\.(png|jpg)$/i, '');
-    for (const p of [`maps/thumb/${map}.png`, `maps/thumb/${map}.jpg`, 'materials/gui/noicon.png']) { const d = assets.read(p); if (d) return { data: d, name: p }; }
+    // No picture is a 404, as in the release (asset/mapimage/ holds the stock maps' only): web/menu-extras.js then looks in
+    // the addons and falls back to GMod's noicon.
+    for (const p of [`maps/thumb/${map}.png`, `maps/thumb/${map}.jpg`]) { const d = assets.read(p); if (d) return { data: d, name: p }; }
     return null;
   }
   const d = assets.read(rel) ?? assets.read(rel.toLowerCase());

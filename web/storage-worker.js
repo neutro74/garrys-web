@@ -93,6 +93,23 @@ self.onmessage=async({data:m})=>{
    if(e){const n=Math.min(e.size,1<<20);bytes=new Uint8Array(n);e.handle.read(bytes,{at:0});}else bytes=new Uint8Array(await(await(await libDir.getFileHandle(name)).getFile()).slice(0,1<<20).arrayBuffer());
    const g=readGmaHeader(bytes);let type='',description='';try{const d=JSON.parse(g.description);type=String(d.type??'').toLowerCase();description=String(d.description??'');}catch{description=g.description;}
    result={title:g.name,type,description};}
+  else if(m.type==='library-mapimage'){
+   // Does this library .gma hold maps/<map>.bsp, and its picture (maps/thumb/<map>.png|jpg)? Only the file table and the
+   // picture's bytes are read, never the whole addon.
+   const name=String(m.name),map=String(m.map).toLowerCase(),e=lib.get(name);
+   const file=e?null:await(await libDir.getFileHandle(name)).getFile(),size=e?e.size:file.size;
+   const read=async(at,n)=>{n=Math.max(0,Math.min(n,size-at));if(e){const b=new Uint8Array(n);e.handle.read(b,{at});return b;}return new Uint8Array(await file.slice(at,at+n).arrayBuffer());};
+   const head=await read(0,4<<20),td=new TextDecoder();result={hasMap:false,thumb:null,type:''};
+   if(td.decode(head.subarray(0,4))==='GMAD'){
+    const dv=new DataView(head.buffer);let at=5+16;const str=()=>{const end=head.indexOf(0,at);if(end<0)throw Error('GMA table too long');const v=td.decode(head.subarray(at,end));at=end+1;return v;};
+    if(head[4]>1)while(str());
+    str();str();str();at+=4;
+    const entries=[];
+    for(;;){if(at+4>head.length)throw Error('GMA table too long');const n=dv.getUint32(at,true);at+=4;if(!n)break;const p=str().toLowerCase();const sz=Number(dv.getBigUint64(at,true));at+=12;entries.push([p,sz]);}
+    let off=at;const where=new Map();for(const [p,sz] of entries){where.set(p,[off,sz]);off+=sz;}
+    result.hasMap=where.has(`maps/${map}.bsp`);
+    for(const ext of ['png','jpg']){const w=where.get(`maps/thumb/${map}.${ext}`);if(result.hasMap&&w&&w[1]<8<<20){result.thumb=await read(w[0],w[1]);result.type='image/'+(ext==='jpg'?'jpeg':'png');break;}}
+   }}
   else if(m.type==='list-addons'){
    // Installed .gma files with their titles (for the in-game Addons page).
    const dir='/overlay/garrysmod/addons';result=[];

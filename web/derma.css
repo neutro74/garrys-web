@@ -37,12 +37,14 @@ html:not(.dk-ready) .dk-wbtn { background: #c8c8c8; border-radius: 3px; width: 2
 .dk-window.pop { animation: dk-pop .4s var(--dk-ease) both; }
 
 /* ---- Buttons (DButton) ---- */
-.dk-btn, .dk .btn, .dk .btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 24px; padding: 0 10px; color: #333; white-space: nowrap; text-decoration: none; font: var(--dk-small);
+.dk-btn, .dk .btn, .dk .btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 24px; padding: 0 10px; color: #333; white-space: nowrap; text-decoration: none; font: var(--dk-small); line-height: 16px;
   border: 4px solid transparent; border-image: var(--dk-button) 8 fill / 4px; transition: translate .1s; cursor: pointer; }
 .dk-btn:hover, .dk .btn:hover, .dk .btn-primary:hover { border-image-source: var(--dk-button-h); }
-.dk-btn:active, .dk-btn.down, .dk .btn:active, .dk .btn-primary:active { border-image-source: var(--dk-button-d); translate: 0 1px; }
+.dk-btn:active, .dk .btn:active, .dk .btn-primary:active { border-image-source: var(--dk-button-d); translate: 0 1px; }
+/* A toggle that is on (a filter or a choice in a group) looks pressed but stays level with the others. */
+.dk-btn.down { border-image-source: var(--dk-button-d); }
 .dk-btn:disabled, .dk .btn:disabled, .dk .btn-primary:disabled { border-image-source: var(--dk-button-dead); color: #999; cursor: default; translate: none; }
-.dk-btn.blue, .dk .btn-primary { color: #fff; border-image-source: var(--dk-tabbar); border-image-slice: 4 fill; text-shadow: 0 1px 0 rgba(0, 0, 0, .3); }
+.dk-btn.blue, .dk .btn-primary { color: #fff; border-image-source: var(--dk-tabbar); border-image-slice: 4 fill; text-shadow: 0 1px 1px rgba(0, 0, 0, .55), 0 0 2px rgba(0, 40, 90, .35); }
 .dk-btn.blue:hover, .dk .btn-primary:hover { border-image-source: var(--dk-tabbar); filter: brightness(1.08); }
 .dk-btn.big { height: 40px; padding: 0 20px; font: 700 15px var(--dk-large); border-width: 8px; border-image-width: 8px; }
 html:not(.dk-ready) .dk-btn, html:not(.dk-ready) .dk .btn { background: #e3e3e3; border: 1px solid #555; border-radius: 3px; }
@@ -52,8 +54,8 @@ html:not(.dk-ready) .dk-btn.blue, html:not(.dk-ready) .dk .btn-primary { backgro
 /* ---- Tabs (DPropertySheet) ---- */
 .dk-sheet { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .dk-tabs { position: relative; display: flex; align-items: flex-end; gap: 2px; padding-left: 4px; height: 28px; flex: none; }
-.dk-tab { position: relative; display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px 2px; color: rgba(0, 0, 0, .75); white-space: nowrap;
-  border: solid transparent; border-width: 8px 6px 0; border-image: var(--dk-tab-off) 8 8 0 8 fill / 8px 6px 0 6px; transition: height .2s var(--dk-ease), color .2s; }
+.dk-tab { position: relative; display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; color: rgba(0, 0, 0, .75); white-space: nowrap; line-height: 16px;
+  border: solid transparent; border-width: 2px 6px 0; border-image: var(--dk-tab-off) 8 8 0 8 fill / 8px 6px 0 6px; transition: height .2s var(--dk-ease), color .2s; }
 .dk-tab:hover { color: #000; height: 25px; }
 .dk-tab.on { height: 28px; color: #fff; text-shadow: 0 1px 1px rgba(0, 0, 0, .6); border-image-source: var(--dk-tab-on); z-index: 1; }
 html:not(.dk-ready) .dk-tab { background: #787a7c; border-radius: 4px 4px 0 0; }

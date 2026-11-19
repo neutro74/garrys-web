@@ -27,6 +27,7 @@ export function menuHost(storage,p2p,{edition='base',startedOff='',lobby=null,se
  const disabledList=()=>session.version?(getVersion(session.version.id)?.disabled??[]):disabledAddons();
  const setDisabled=(list)=>{if(session.version){const v=getVersion(session.version.id)??session.version;v.disabled=list;session.version=putVersion(v);}else localStorage.setItem(DISABLED,JSON.stringify(list));};
  const download=(blob,name)=>{const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);};
+ const mapImages=new Map();   // map -> Promise of a blob: URL (or null)
  return async(op,args)=>{
   switch(op){
    case 'addons':{const meta=libraryMeta(),out=[];
@@ -37,6 +38,21 @@ export function menuHost(storage,p2p,{edition='base',startedOff='',lobby=null,se
    case 'install-addon':{const file=args.file;if(!(file instanceof Blob))throw Error('No file');await checkGma(file);
     const name=fileName(file.name||'addon');const size=await writeFile(name,file);updateMeta(name,{title:String(file.name||name).replace(/\.gma$/i,''),size,added:Date.now()});
     await storage.request('library-add',{name});addToSession(name,{title:file.name,size});return name;}
+   case 'map-image':{
+    // The picture for a map from an addon (GMod's asset://mapimage/<map>): the one the addon brings, else its Workshop picture.
+    const map=String(args.map??'').toLowerCase();if(!/^[\w.-]{1,64}$/.test(map))return null;
+    if(mapImages.has(map))return mapImages.get(map);
+    // As a data: URL: the menu page mangles blob: URLs set on its images.
+    const dataUrl=(blob)=>new Promise((res,rej)=>{const f=new FileReader();f.onload=()=>res(f.result);f.onerror=()=>rej(f.error);f.readAsDataURL(blob);});
+    const find=async()=>{const meta=libraryMeta();
+     for(const name of session.active){let r;try{r=await storage.request('library-mapimage',{name,map});}catch{continue;}
+      if(!r?.hasMap)continue;
+      if(r.thumb)return dataUrl(new Blob([r.thumb],{type:r.type}));
+      const pv=meta[name]?.preview;
+      if(pv)try{const res=await fetch(pv,{mode:'cors'});if(res.ok)return dataUrl(await res.blob());}catch{}
+      return null;}
+     return null;};
+    const p=find();mapImages.set(map,p);return p;}
    case 'remove-addon':{const name=String(args.name);removeFromSession(name);await storage.request('library-remove',{name});dropMeta(name);return true;}
    // Bundled addons (Extended): their list and pictures from the edition tree, and an on/off switch applied at next start.
    case 'bundled-addons':{if(edition!=='extended')return {edition,addons:[]};const base=new URL('../game/ext/',import.meta.url);

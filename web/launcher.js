@@ -17,6 +17,7 @@ import { shareSave, shareInfo, fetchShare, listShares, saveLink, shareThumb } fr
 import { encodeBackup } from './storage.js';
 import { account, login, register, logout, changePassword, sync, autoSync } from './account.js';
 import { steamBox, steamAccount } from './steam-account.js';
+import { gameSettings, setGameSettings, GRAPHICS, FPS, SLIDERS } from './game-settings.js';
 import { launchAddons, versions, getVersion, putVersion, removeVersion, newVersionId, libraryMeta, hasFile, downloadWorkshop, workshopDetails, hubJson, hubHttp, impact, shareVersion, fetchSharedVersion, wsName } from './library.js';
 
 const root = document.getElementById('launcher');
@@ -140,6 +141,8 @@ async function extendedInfo() {
 // open panels in the card's place (chat, the files this browser keeps, controls). The bottom strip is its NavBar,
 // with the graphics preset where the game has its gamemode chooser.
 const WHATS_NEW = [
+  ['Game settings', 'Options sets graphics (Low by default, kept on every start), frame rate, volume, sensitivity and field of view.'],
+  ['Addon map pictures', 'Maps from addons show their own picture in Start New Game.'],
   ['Pings and automod', 'Mentions and replies wait in your inbox, @ suggests names, and automod keeps chat clean.'],
   ['A launcher of its own', 'One window in GMod\'s own Derma style, with tabs for playing, saves, chat, friends and versions.'],
   ['Chat, rebuilt', 'Channels, private messages, replies, pictures, mentions and edits. Press Shift+Tab in game to chat without leaving it.'],
@@ -747,13 +750,43 @@ function menu(ext, backdrop, opts = {}) {
 
     // ---- Options: the files this browser keeps, display, controls ----
     function drawOptions(el) {
-      el.innerHTML = `<div class="gwl-options"><div class="panel gwl-panel" data-files></div><div class="gwl-col">
-        <div class="dk-panel"><h2>Display</h2><p class="gwl-hint">The game runs at the window size. 3D quality (on Play) scales only the 3D view.</p>
-          <button type="button" class="dk-btn" data-fs2><img class="si" src="${icon('monitor')}" alt=""><span></span></button></div>
-        <div class="panel gwl-panel" data-controls></div></div></div>`;
+      el.innerHTML = `<div class="gwl-options"><div class="gwl-col"><div class="panel gwl-panel gwl-game"><div class="panel-head"><img src="${icon('cog')}" alt=""><span>Game settings</span><small class="gwl-headnote">applied every time the game starts</small></div>
+          <div class="panel-body">
+            <div class="gwl-set"><b>Graphics</b><span class="gwl-seg" data-graphics>${Object.entries(GRAPHICS).map(([k, g]) => `<button type="button" class="dk-btn" data-v="${k}">${g.label}</button>`).join('')}</span><small data-gnote></small></div>
+            <div class="gwl-set"><b>3D resolution</b><span class="gwl-seg" data-res>${Object.entries(QUALITY).map(([k, q]) => `<button type="button" class="dk-btn" data-v="${k}">${q.label}</button>`).join('')}</span><small data-rnote></small></div>
+            <div class="gwl-set"><b>Frame rate</b><span class="gwl-seg" data-fps>${Object.entries(FPS).map(([k, f]) => `<button type="button" class="dk-btn" data-v="${k}">${f.label}</button>`).join('')}</span><small>Above 30 only helps on a fast computer.</small></div>
+            ${[['volume', 'Volume'], ['sensitivity', 'Mouse sensitivity'], ['fov', 'Field of view']].map(([k, label]) => `<div class="gwl-set"><b>${label}</b><span class="gwl-slide"><input type="range" data-slider="${k}" min="${SLIDERS[k][0]}" max="${SLIDERS[k][1]}" step="${SLIDERS[k][2]}"><output data-out="${k}"></output><button type="button" class="dk-btn" data-reset="${k}" data-tip="Use the game's own setting">Reset</button></span></div>`).join('')}
+            <label class="gwl-set gwl-check"><input type="checkbox" data-showfps> Show the frame rate in game</label>
+            <p class="gwl-hint">Changes in the game's own Video options last until you quit; these are applied again at the next start.</p>
+            <div class="row"><button type="button" class="dk-btn" data-fs2><img class="si" src="${icon('monitor')}" alt=""><span></span></button><button type="button" class="dk-btn" data-defaults>Restore defaults</button></div>
+          </div></div><div class="panel gwl-panel" data-files></div></div>
+        <div class="gwl-col"><div class="panel gwl-panel" data-controls></div></div></div>`;
       filesPanel(el.querySelector('[data-files]')); controlsPanel(el.querySelector('[data-controls]'));
-      const b = el.querySelector('[data-fs2]'), label = () => { b.querySelector('span').textContent = document.fullscreenElement ? 'Leave fullscreen' : 'Fullscreen'; };
+      const $ = (q) => el.querySelector(q);
+      const draw = () => {
+        const s = gameSettings();
+        for (const [sel, v] of [['[data-graphics]', s.graphics], ['[data-res]', quality], ['[data-fps]', s.fps]]) for (const b of el.querySelectorAll(`${sel} [data-v]`)) b.classList.toggle('down', b.dataset.v === v);
+        $('[data-gnote]').textContent = GRAPHICS[s.graphics].note; $('[data-rnote]').textContent = QUALITY[quality].size;
+        for (const k of Object.keys(SLIDERS)) {
+          const v = s[k] ?? SLIDERS[k][3], set = s[k] != null;
+          $(`[data-slider="${k}"]`).value = v;
+          $(`[data-out="${k}"]`).textContent = set ? (k === 'volume' ? `${Math.round(v * 100)}%` : String(v)) : 'default';
+          $(`[data-reset="${k}"]`).disabled = !set;
+        }
+        $('[data-showfps]').checked = s.showfps;
+      };
+      for (const b of el.querySelectorAll('[data-graphics] [data-v]')) b.onclick = () => { setGameSettings({ graphics: b.dataset.v }); draw(); };
+      for (const b of el.querySelectorAll('[data-fps] [data-v]')) b.onclick = () => { setGameSettings({ fps: b.dataset.v }); draw(); };
+      for (const b of el.querySelectorAll('[data-res] [data-v]')) b.onclick = () => { quality = b.dataset.v; store.set('quality', quality); drawQuality(); draw(); };
+      for (const k of Object.keys(SLIDERS)) {
+        $(`[data-slider="${k}"]`).oninput = (e) => { setGameSettings({ [k]: +e.target.value }); draw(); };
+        $(`[data-reset="${k}"]`).onclick = () => { setGameSettings({ [k]: null }); draw(); };
+      }
+      $('[data-showfps]').onchange = (e) => { setGameSettings({ showfps: e.target.checked }); draw(); };
+      $('[data-defaults]').onclick = () => { setGameSettings({ graphics: 'low', fps: '30', showfps: false, volume: null, sensitivity: null, fov: null }); draw(); };
+      const b = $('[data-fs2]'), label = () => { b.querySelector('span').textContent = document.fullscreenElement ? 'Leave fullscreen' : 'Fullscreen'; };
       b.onclick = () => { fsBtn.click(); setTimeout(label, 300); }; label();
+      draw();
     }
 
     // ---- Chat (web/chat-app.js), shared by the Chat and Friends tabs; it stays alive so notices keep coming ----
@@ -855,6 +888,7 @@ function menu(ext, backdrop, opts = {}) {
 // Boot messages from guest-worker.js (and their order) become a progress value. The last stage, the engine's own startup,
 // has no measurable total, so it eases toward 99% and completes when the first frame arrives.
 const STAGES = ['Loading the engine', 'Reading game files', 'Loading game code', 'Starting the game'];
+const STAGE_TICKS = ['Engine', 'Game files', 'Game code', 'Start'];
 function phase(text) {
   let m;
   if (/^Starting\.\.\./.test(text)) return [0, 0, 'Preparing'];
@@ -903,7 +937,7 @@ function loading(sel, backdrop) {
         <div class="gwl-loadhead"><span class="pic" style="background-image:url('${game(ed.picture)}')"></span>
           <div><b data-map>Starting ${esc(ed.name)}...</b><span data-detail>${esc(ed.short)} · ${esc(qual.label)} graphics</span></div><b class="pct" data-pct>0%</b></div>
         <div class="dk-bar" data-prog role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Loading"><div data-bar></div></div>
-        <ol class="gwl-steps" data-steps>${STAGES.map((t, i) => `<li data-step="${i}"><img class="si" alt="" src="${icon('bullet_white')}"><span>${esc(t)}</span></li>`).join('')}</ol>
+        <ol class="gwl-steps" data-steps>${STAGE_TICKS.map((t, i) => `<li data-step="${i}" title="${esc(STAGES[i])}"><img class="si" alt="" src="${icon('bullet_white')}"><span>${esc(t)}</span></li>`).join('')}</ol>
         <div class="gwl-loadlog" data-spam aria-hidden="true"></div>
         <div class="gwl-loadfoot"><span class="dk-say" data-text></span><button type="button" class="dk-btn" data-cancel><img class="si" alt="" src="${icon('cross')}">Cancel</button></div>
       </div>
@@ -918,7 +952,7 @@ function loading(sel, backdrop) {
   const show = () => {
     const v = Math.min(100, value);
     bar.style.width = `${Math.max(0.2, v)}%`; prog.setAttribute('aria-valuenow', String(Math.floor(v)));
-    text.textContent = failed ? `Stopped after ${elapsed()}` : finished ? 'Ready' : `${STAGES[step]}...`;
+    text.textContent = failed ? `Stopped after ${elapsed()}` : finished ? 'Ready' : `Step ${step + 1} of ${STAGES.length}`;
     pct.textContent = `${Math.floor(v)}%`; timeEl.textContent = elapsed();
     if (!failed) { mapEl.textContent = finished ? 'Ready' : `${STAGES[step]}...`; tickSteps(step, finished); }
   };
@@ -997,8 +1031,8 @@ function banScreen(ban) {
 async function start() {
   // Ask for access to the server while the splash is still up (see requestHubAccess); a prompt then comes now, not mid-menu.
   if (hubUrl()) {
-    statusEl.textContent = 'Connecting to the Garry\'s Web server...';
-    await requestHubAccess({ onWait: () => { statusEl.textContent = 'Connecting to the Garry\'s Web server... If your browser asks to allow access to devices on your local network, choose Allow.'; } });
+    statusEl.textContent = 'Connecting to the server...';
+    await requestHubAccess({ onWait: () => { statusEl.textContent = 'Connecting to the server... If your browser asks about devices on your local network, choose Allow.'; } });
   }
   // Banned (by address, browser or account): a ban screen, and nothing else opens (no launcher, no game).
   const ban = await banCheck().catch(() => null);

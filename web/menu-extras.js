@@ -46,6 +46,18 @@ const liveMount = (name) => {
   if (!inGameNow) lua('if steamworks and steamworks.ApplyAddons then steamworks.ApplyAddons() end');
 };
 let inGameNow = false;
+// Map pictures: the release has asset/mapimage/<map> for the stock maps only, so a map from an addon fails to load. Its
+// picture then comes from the addon (maps/thumb/<map>.png) or its Workshop page, and else GMod's "no icon".
+addEventListener('error', async (e) => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement) || img.dataset.gwMapimg) return;
+  const m = /\/asset\/mapimage\/([^/?#]+?)(?:\.(?:png|jpg))?(?:[?#]|$)/i.exec(img.src);
+  if (!m) return;
+  img.dataset.gwMapimg = '1';
+  let url = null;
+  try { url = await host('map-image', { map: decodeURIComponent(m[1]) }); } catch { /* none */ }
+  img.src = url ?? img.src.replace(/\/asset\/mapimage\/.*$/i, '/asset/garrysmod/materials/gui/noicon.png');
+}, true);
 // Does a .gma hold a map (maps/*.bsp)? Its header lists every file, so the first part of the file is enough to tell.
 async function gmaHasMap(file) {
   try {

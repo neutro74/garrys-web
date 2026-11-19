@@ -212,7 +212,9 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
       frag.append(b);
     }
     nav.replaceChildren(frag);
-    const n = hub.presence?.size ?? 0; $('[data-online]').textContent = hub.state === 'online' ? `${hub.online ?? 0} here${n ? ` · ${n} signed in` : ''}` : hub.state === 'connecting' ? 'connecting…' : hub.state === 'banned' ? 'banned' : 'offline';
+    const n = hub.presence?.size ?? 0, onl = $('[data-online]');
+    onl.textContent = hub.state === 'online' ? `${hub.online ?? 0} online` : hub.state === 'connecting' ? 'connecting…' : hub.state === 'banned' ? 'banned' : 'offline';
+    onl.title = hub.state === 'online' ? `${hub.online ?? 0} connected, ${n} signed in` : '';
     drawMe();
   }
   // A custom status: its emoji (Unicode or :name:) and text; `fallback` when there is none.
@@ -308,13 +310,14 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
   function withDot(av, status) { const w = h('span', 'gwc-av'); w.append(av, h('i', 'gwc-dot s-' + (status ?? 'offline'))); return w; }
   function drawMe() {
     const el = $('[data-me]'), a = myAccount(), p = a ? cachedProfile(a) : null, st = a ? hub.myStatus ?? 'online' : 'online';
-    const info = h('span', 'gwc-meinfo', h('b', null, a ? displayName(p, a) : hub.name), h('small', null, ...(a ? statusBits(p, STATUS[st][0]) : ['Guest · not signed in'])));
+    // Your name and status; clicking them sets the status (as in Discord), the avatar opens your card, the cog your profile.
+    const info = h('button', 'gwc-meinfo', h('b', null, a ? displayName(p, a) : hub.name), h('small', null, ...(a ? statusBits(p, STATUS[st][0]) : ['Guest · not signed in'])));
+    info.type = 'button'; info.dataset.tip = a ? 'Set your status' : 'Sign in';
+    info.onclick = (e) => { if (!a) return onEditProfile(); statusMenu(e.currentTarget); };
     const av = withDot(avatarEl(p, hub.name, 32), a ? st : 'online');
-    const status = h('button', 'dk-btn', si(BULLET[a ? st : 'online'])); status.dataset.tip = 'Set your status';
-    status.onclick = (e) => { if (!a) return onEditProfile(); statusMenu(e.currentTarget); };
-    const gear = h('button', 'dk-btn', si('cog')); gear.dataset.tip = a ? 'Edit your profile' : 'Sign in'; gear.onclick = () => onEditProfile();
+    const gear = h('button', 'dk-btn', si('cog')); gear.type = 'button'; gear.dataset.tip = a ? 'Edit your profile' : 'Sign in'; gear.onclick = () => onEditProfile();
     av.style.cursor = 'pointer'; av.onclick = (e) => (a ? profileCard(a, e.currentTarget) : onEditProfile());
-    el.replaceChildren(av, info, status, gear);
+    el.replaceChildren(av, info, gear);
   }
   function statusMenu(anchor) {
     const list = h('div', 'dk-menu');
@@ -626,7 +629,7 @@ export function mountChat(root, { hub, mode = 'launcher', onClose = null, onNoti
     pop.style.left = x + 'px'; pop.style.top = y + 'px';
   }
   function closePop() { pop.hidden = true; pop.replaceChildren(); }
-  const onDocDown = (e) => { if (!pop.hidden && !pop.contains(e.target) && !e.target.closest?.('.gwc-msgtools, [data-me] .dk-btn, [data-inbox], [data-notif]')) closePop(); };
+  const onDocDown = (e) => { if (!pop.hidden && !pop.contains(e.target) && !e.target.closest?.('.gwc-msgtools, [data-me] button, [data-inbox], [data-notif]')) closePop(); };
   document.addEventListener('pointerdown', onDocDown, true);
 
   // ---- Composing ----
